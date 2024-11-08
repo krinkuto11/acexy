@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"io"
+	"javinator9889/acexy/lib/acexy"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,7 +35,11 @@ var middlewareClient = http.Client{
 	},
 }
 
-func (a *Acexy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+type Proxy struct {
+	Acexy *acexy.Acexy
+}
+
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Verify the request method
 	if r.Method != http.MethodGet {
 		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
@@ -61,7 +66,7 @@ func (a *Acexy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gather the stream information
-	stream, err := a.StartStream(id, q)
+	stream, err := p.Acexy.StartStream(id, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
@@ -75,15 +80,15 @@ func (a *Acexy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//
 	// When in MPEG-TS mode, the client connects to the endpoint and waits for the stream to finish.
 	// This is a blocking operation, so we can finish the stream when the client disconnects.
-	switch a.Endpoint {
-	case M3U8_ENDPOINT:
-		timedOut := SetTimeout(streamTimeout)
+	switch p.Acexy.Endpoint {
+	case acexy.M3U8_ENDPOINT:
+		timedOut := acexy.SetTimeout(streamTimeout)
 		defer func() {
 			<-timedOut
-			a.FinishStream(id)
+			p.Acexy.FinishStream(id)
 		}()
-	case MPEG_TS_ENDPOINT:
-		defer a.FinishStream(id)
+	case acexy.MPEG_TS_ENDPOINT:
+		defer p.Acexy.FinishStream(id)
 	}
 
 	slog.Debug("Response", "headers", w.Header())
@@ -218,14 +223,14 @@ func main() {
 	slog.SetLogLoggerLevel(LookupLogLevel())
 	slog.Debug("CLI Args", "args", flag.CommandLine)
 
-	var endpoint AcexyEndpoint
+	var endpoint acexy.AcexyEndpoint
 	if m3u8 {
-		endpoint = M3U8_ENDPOINT
+		endpoint = acexy.M3U8_ENDPOINT
 	} else {
-		endpoint = MPEG_TS_ENDPOINT
+		endpoint = acexy.MPEG_TS_ENDPOINT
 	}
 	// Create a new Acexy instance
-	acexy := &Acexy{
+	acexy := &acexy.Acexy{
 		Scheme:   scheme,
 		Host:     host,
 		Port:     port,
@@ -234,9 +239,10 @@ func main() {
 	acexy.Init()
 
 	// Create a new HTTP server
+	proxy := &Proxy{Acexy: acexy}
 	mux := http.NewServeMux()
-	mux.Handle(APIv1_URL+"/getstream", acexy)
-	mux.Handle(APIv1_URL+"/getstream/", acexy)
+	mux.Handle(APIv1_URL+"/getstream", proxy)
+	mux.Handle(APIv1_URL+"/getstream/", proxy)
 	mux.Handle("/", http.NotFoundHandler())
 
 	// Start the HTTP server
