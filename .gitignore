@@ -26,3 +26,6 @@ go.work.sum
 
 # The binary file for the application
 acexy/acexy
+
+# VSCode files - we don't want those to get pushed to the repo
+.vscode/
