@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"io"
 	"javinator9889/acexy/lib/acexy"
 	"log/slog"
 	"net/http"
@@ -22,18 +21,6 @@ var (
 
 // The API URL we are listening to
 const APIv1_URL = "/ace"
-
-// The transport to be used when connecting to the AceStream middleware. We have to tweak it
-// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
-// the AceStream Middleware won't work.
-var middlewareClient = http.Client{
-	Transport: &http.Transport{
-		DisableCompression: true,
-		MaxIdleConns:       10,
-		MaxConnsPerHost:    10,
-		IdleConnTimeout:    30 * time.Second,
-	},
-}
 
 type Proxy struct {
 	Acexy *acexy.Acexy
@@ -66,12 +53,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gather the stream information
-	stream, err := p.Acexy.StartStream(id, q)
+	stream, err := p.Acexy.FetchStream(id, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
 		return
 	}
+
+	// And start playing the stream. The `StartStream` will dump the contents of the new or
+	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
+	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
+	// pass it directly.
+	slog.Debug("Starting stream", "path", r.URL.Path, "id", id)
+	if err := p.Acexy.StartStream(stream, w); err != nil {
+		slog.Error("Failed to start stream", "error", err)
+		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the client headers
+	w.WriteHeader(http.StatusOK)
+
 	// Defer the stream finish. This will be called when the request is done. When in M3U8 mode,
 	// the client connects directly to a subset of endpoints, so we are blind to what the client
 	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
@@ -82,42 +84,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This is a blocking operation, so we can finish the stream when the client disconnects.
 	switch p.Acexy.Endpoint {
 	case acexy.M3U8_ENDPOINT:
+		w.Header().Set("Content-Type", "application/x-mpegURL")
 		timedOut := acexy.SetTimeout(streamTimeout)
 		defer func() {
 			<-timedOut
-			p.Acexy.FinishStream(id)
+			p.Acexy.StopStream(stream, w)
 		}()
 	case acexy.MPEG_TS_ENDPOINT:
-		defer p.Acexy.FinishStream(id)
-	}
-
-	slog.Debug("Response", "headers", w.Header())
-
-	resp, err := middlewareClient.Get(stream)
-	if err != nil {
-		slog.Error("Failed to forward stream", "error", err)
-		http.Error(w, "Failed to forward stream", http.StatusInternalServerError)
-		return
-	}
-	slog.Debug("Response", "resp", resp)
-	defer resp.Body.Close()
-
-	// Copy the response headers
-	for k, v := range resp.Header {
-		w.Header().Set(k, v[0])
-	}
-	if length, err := strconv.Atoi(resp.Header.Get("Content-Length")); err != nil || length == -1 {
-		// Set the Transfer-Encoding header to chunked if the Content-Length is not set or is -1
+		w.Header().Set("Content-Type", "video/MP2T")
 		w.Header().Set("Transfer-Encoding", "chunked")
+		defer p.Acexy.StopStream(stream, w)
 	}
-	w.WriteHeader(resp.StatusCode)
-	slog.Debug("Response", "headers", w.Header())
 
-	// Copy the response body until EOF
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		slog.Error("Failed to copy response body", "error", err)
-	}
-	slog.Debug("Done", "path", r.URL.Path)
+	// And wait for the client to disconnect
+	<-r.Context().Done()
+	slog.Debug("Client disconnected", "path", r.URL.Path)
 }
 
 func LookupEnvOrString(key string, def string) string {

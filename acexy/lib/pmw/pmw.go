@@ -113,13 +113,22 @@ func (pmw *PMultiWriter) Write(p []byte) (n int, err error) {
 // Add appends a writer to the list of writers this multiwriter writes to.
 func (pmw *PMultiWriter) Add(w io.Writer) {
 	pmw.Lock()
+	defer pmw.Unlock()
+
+	// Check if the writer is already in the list
+	for _, ew := range pmw.writers {
+		if ew == w {
+			return
+		}
+	}
 	pmw.writers = append(pmw.writers, w)
-	pmw.Unlock()
 }
 
 // Remove will remove a previously added writer from the list of writers.
 func (pmw *PMultiWriter) Remove(w io.Writer) {
 	pmw.Lock()
+	defer pmw.Unlock()
+
 	var writers []io.Writer
 	for _, ew := range pmw.writers {
 		if ew != w {
@@ -127,5 +136,4 @@ func (pmw *PMultiWriter) Remove(w io.Writer) {
 		}
 	}
 	pmw.writers = writers
-	pmw.Unlock()
 }
