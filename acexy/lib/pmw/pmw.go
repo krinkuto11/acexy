@@ -1,3 +1,8 @@
+// Acexy - Copyright (C) 2024 - Javinator9889 <dev at javinator9889 dot com>
+// This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+// This is free software, and you are welcome to redistribute it
+// under certain conditions; type `show c' for details.
+//
 // Package pmw (Parallel MultiWriter) contains an implementation of an "io.Writer" that
 // duplicates it's writes to all the provided writers, similar to the Unix
 // tee(1) command. Writers can be added and removed dynamically after creation. Each write is

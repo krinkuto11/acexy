@@ -1,7 +1,13 @@
+// Acexy - Copyright (C) 2024 - Javinator9889 <dev at javinator9889 dot com>
+// This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+// This is free software, and you are welcome to redistribute it
+// under certain conditions; type `show c' for details.
 package main
 
 import (
+	_ "embed"
 	"flag"
+	"fmt"
 	"javinator9889/acexy/lib/acexy"
 	"log/slog"
 	"net/http"
@@ -18,6 +24,9 @@ var (
 	streamTimeout time.Duration
 	m3u8          bool
 )
+
+//go:embed LICENSE.short
+var LICENSE string
 
 // The API URL we are listening to
 const APIv1_URL = "/ace"
@@ -159,6 +168,11 @@ func LookupLogLevel() slog.Level {
 
 func parseArgs() {
 	// Parse the command-line arguments
+	flag.BoolFunc("license", "print the license and exit", func(_ string) error {
+		fmt.Println(LICENSE)
+		os.Exit(0)
+		return nil
+	})
 	flag.StringVar(
 		&addr,
 		"addr",
