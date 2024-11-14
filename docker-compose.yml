@@ -1,6 +1,6 @@
 services:
   acexy:
-    image: ghrc.io/Javinator9889/acexy
+    image: ghcr.io/Javinator9889/acexy
     ports:
       - "8080:8080"
       - "6878:6878"
