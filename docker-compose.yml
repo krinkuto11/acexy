@@ -1,0 +1,13 @@
+services:
+  acexy:
+    image: ghrc.io/Javinator9889/acexy
+    ports:
+      - "8080:8080"
+      - "6878:6878"
+    environment:
+      ACEXY_LISTEN_ADDR: ":8080"  # Listen on port 8080
+      ACEXY_SCHEME: "http"        # Use HTTP
+      ACEXY_HOST: "localhost"     # Host is localhost
+      ACEXY_PORT: "6878"          # Port is 6878
+      ACEXY_M3U8_STREAM_TIMEOUT: "60s"  # Timeout is 60 seconds when in M3U8 mode
+      ACEXY_M3U8: "false"         # Disable M3U8 mode
