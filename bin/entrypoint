@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# This script is a simple entrypoint for the container. It will run the proxy and the
+# AceStream engine in the background, waiting for them to complete.
+
+# Start the AceStream engine. As of https://github.com/martinbjeldbak/acestream-http-proxy/blob/b293a44c6260bd82f0b20038aa1cfa8cb9b7471f/Dockerfile#L40
+# the script is located at "/run.sh"
+$SHELL /run.sh &
+
+# Start the proxy. Acexy is located at "/acexy"
+/acexy &
+
+trap 'kill $(jobs -p)' EXIT INT TERM QUIT
+
+# Wait for any of them to complete
+wait -n
