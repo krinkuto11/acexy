@@ -56,7 +56,7 @@ The latest release is available at the [releases page](/releases/latest),
 but picking a fixed version is recommended. To run the container, just issue:
 
 ```shell
-docker run -t -p 6878:6878 -p 8080:8080 ghrc.io/Javinator9889/acexy
+docker run -t -p 6878:6878 -p 8080:8080 ghcr.io/Javinator9889/acexy
 ```
 
 > **NOTE**: For your convenience, a `docker-compose.yml` file is given with
