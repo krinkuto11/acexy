@@ -47,10 +47,4 @@ jobs:
               with:
                 token: ${{ secrets.GITHUB_TOKEN }}
                 id: ${{ github.event.release.id }}
-                body: |
-                    This release contains a Docker image with the following digest: ${{ steps.push.outputs.digest }}
-                    The image is available at ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tags }}
-                    The image was built from the following commit: ${{ github.sha }}
-                    The image was built by ${{ github.actor }}
-                    The image was built using the following labels: ${{ steps.meta.outputs.labels }}
-                    The image was built using the following tags: ${{ steps.meta.outputs.tags }}
+                body: "`docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tags }}`"
