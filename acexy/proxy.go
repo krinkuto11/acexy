@@ -45,14 +45,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	// Verify the client has included the ID parameter
-	id := q.Get("id")
-	if id == "" {
-		slog.Error("ID parameter is required", "path", r.URL.Path)
-		http.Error(w, "ID parameter is required", http.StatusBadRequest)
+	aceId, err := acexy.AceIDFromParams(q)
+	if err != nil {
+		slog.Error("ID parameter is required", "path", r.URL.Path, "error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Remove the ID parameter from the query
-	q.Del("id")
 
 	// Verify the client has not included the PID parameter
 	if q.Has("pid") {
@@ -62,7 +60,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Gather the stream information
-	stream, err := p.Acexy.FetchStream(id, q)
+	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
@@ -73,7 +71,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
 	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
 	// pass it directly.
-	slog.Debug("Starting stream", "path", r.URL.Path, "id", id)
+	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	if err := p.Acexy.StartStream(stream, w); err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
