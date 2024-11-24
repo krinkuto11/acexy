@@ -264,6 +264,7 @@ func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddlewar
 		slog.Warn("Error getting stream", "error", err)
 		return nil, err
 	}
+	slog.Debug("Stream response", "statusCode", res.StatusCode, "headers", res.Header, "res", res)
 	defer res.Body.Close()
 
 	// Read the response into the body
