@@ -52,7 +52,7 @@ type AceStream struct {
 	PlaybackURL string
 	StatURL     string
 	CommandURL  string
-	ID          string
+	ID          AceID
 }
 
 type ongoingStream struct {
@@ -71,7 +71,7 @@ type Acexy struct {
 	Endpoint AcexyEndpoint
 
 	// Information about ongoing streams
-	streams map[string]*ongoingStream
+	streams map[AceID]*ongoingStream
 	mutex   *sync.Mutex
 }
 
@@ -97,7 +97,7 @@ const (
 
 // Initializes the Acexy structure
 func (a *Acexy) Init() {
-	a.streams = make(map[string]*ongoingStream)
+	a.streams = make(map[AceID]*ongoingStream)
 	a.mutex = &sync.Mutex{}
 }
 
@@ -107,40 +107,40 @@ func (a *Acexy) Init() {
 // the same time through the middleware. When the last client finishes, the stream is removed.
 // The stream is identified by the “id“ identifier. Optionally, takes extra parameters to
 // customize the stream.
-func (a *Acexy) FetchStream(id string, extraParams url.Values) (*AceStream, error) {
+func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, error) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
 	// Check if the stream is already enqueued
-	if stream, ok := a.streams[id]; ok {
-		slog.Info("Reusing existing", "stream", id, "clients", stream.clients)
+	if stream, ok := a.streams[aceId]; ok {
+		slog.Info("Reusing existing", "stream", aceId, "clients", stream.clients)
 		return stream.stream, nil
 	}
 
 	// Enqueue the middleware
-	middleware, err := GetStream(a, id, extraParams)
+	middleware, err := GetStream(a, aceId, extraParams)
 	if err != nil {
 		slog.Error("Error getting stream middleware", "error", err)
 		return nil, err
 	}
 
 	// We got the stream information, build the structure around it and register the stream
-	slog.Debug("Middleware Information", "id", id, "middleware", middleware)
+	slog.Debug("Middleware Information", "id", aceId, "middleware", middleware)
 	stream := &AceStream{
 		PlaybackURL: middleware.Response.PlaybackURL,
 		StatURL:     middleware.Response.StatURL,
 		CommandURL:  middleware.Response.CommandURL,
-		ID:          id,
+		ID:          aceId,
 	}
 
-	a.streams[id] = &ongoingStream{
+	a.streams[aceId] = &ongoingStream{
 		clients: 0,
 		done:    make(chan struct{}),
 		player:  nil,
 		stream:  stream,
 		writers: pmw.New(),
 	}
-	slog.Info("Started new stream", "id", id, "clients", a.streams[id].clients)
+	slog.Info("Started new stream", "id", aceId, "clients", a.streams[aceId].clients)
 	return stream, nil
 }
 
@@ -234,8 +234,8 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 // by the “id“ identifier. Optionally, takes extra parameters to customize the stream.
 // Returns the response from the AceStream backend. If the request fails, an error is returned.
 // If the `AceStreamMiddleware:error` field is not empty, an error is returned.
-func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddleware, error) {
-	slog.Debug("Getting stream", "id", id, "extraParams", extraParams)
+func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddleware, error) {
+	slog.Debug("Getting stream", "id", aceId, "extraParams", extraParams)
 	slog.Debug("Acexy Information", "scheme", a.Scheme, "host", a.Host, "port", a.Port)
 	req, err := http.NewRequest("GET", a.Scheme+"://"+a.Host+":"+strconv.Itoa(a.Port)+string(a.Endpoint), nil)
 	if err != nil {
@@ -246,13 +246,14 @@ func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddlewar
 	// This prevents errors when multiple streams are accessed at the same time. Because of
 	// using the UUID package, we can be sure that the PID is unique.
 	pid := uuid.NewString()
-	slog.Info("Temporary PID", "pid", pid, "stream", id)
+	slog.Info("Temporary PID", "pid", pid, "stream", aceId)
 	if extraParams == nil {
 		extraParams = req.URL.Query()
 	}
-	extraParams.Add("id", id)
-	extraParams.Add("format", "json")
-	extraParams.Add("pid", pid)
+	idType, id := aceId.ID()
+	extraParams.Set(string(idType), id)
+	extraParams.Set("format", "json")
+	extraParams.Set("pid", pid)
 	// and set the headers
 	req.Header.Set("Content-Type", "application/json")
 	req.URL.RawQuery = extraParams.Encode()
@@ -264,6 +265,7 @@ func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddlewar
 		slog.Warn("Error getting stream", "error", err)
 		return nil, err
 	}
+	slog.Debug("Stream response", "statusCode", res.StatusCode, "headers", res.Header, "res", res)
 	defer res.Body.Close()
 
 	// Read the response into the body
@@ -282,7 +284,7 @@ func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddlewar
 
 	if response.Error != "" {
 		slog.Warn("Error in stream response", "error", response.Error)
-		return nil, err
+		return nil, errors.New(response.Error)
 	}
 	return &response, nil
 }
