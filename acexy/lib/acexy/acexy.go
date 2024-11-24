@@ -283,7 +283,7 @@ func GetStream(a *Acexy, id string, extraParams url.Values) (*AceStreamMiddlewar
 
 	if response.Error != "" {
 		slog.Warn("Error in stream response", "error", response.Error)
-		return nil, err
+		return nil, errors.New(response.Error)
 	}
 	return &response, nil
 }
