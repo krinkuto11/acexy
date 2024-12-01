@@ -23,6 +23,8 @@ var (
 	port          int
 	streamTimeout time.Duration
 	m3u8          bool
+	emptyTimeout  time.Duration
+	bufferSize    int
 )
 
 //go:embed LICENSE.short
@@ -104,8 +106,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// And wait for the client to disconnect
-	<-r.Context().Done()
-	slog.Debug("Client disconnected", "path", r.URL.Path)
+	select {
+	case <-r.Context().Done():
+		slog.Debug("Client disconnected", "path", r.URL.Path)
+	case <-p.Acexy.WaitStream(stream):
+		slog.Debug("Stream finished", "path", r.URL.Path)
+	}
 }
 
 func LookupEnvOrString(key string, def string) string {
@@ -207,6 +213,18 @@ func parseArgs() {
 		LookupEnvOrBool("ACEXY_M3U8", false),
 		"enable M3U8 mode. Can be set with ACEXY_M3U8 environment variable.",
 	)
+	flag.DurationVar(
+		&emptyTimeout,
+		"empty-timeout",
+		LookupEnvOrDuration("ACEXY_EMPTY_TIMEOUT", 1*time.Minute),
+		"timeout in human-readable format to finish the stream when the source is empty. Can be set with ACEXY_EMPTY_TIMEOUT environment variable.",
+	)
+	flag.IntVar(
+		&bufferSize,
+		"buffer-size",
+		LookupEnvOrInt("ACEXY_BUFFER_SIZE", 32768),
+		"buffer size (in bytes) to use when copying the data. Can be set with ACEXY_BUFFER_SIZE environment variable.",
+	)
 	flag.Parse()
 }
 
@@ -224,10 +242,12 @@ func main() {
 	}
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
-		Scheme:   scheme,
-		Host:     host,
-		Port:     port,
-		Endpoint: endpoint,
+		Scheme:       scheme,
+		Host:         host,
+		Port:         port,
+		Endpoint:     endpoint,
+		EmptyTimeout: emptyTimeout,
+		BufferSize:   bufferSize,
 	}
 	acexy.Init()
 
