@@ -14,6 +14,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/dustin/go-humanize"
 )
 
 var (
@@ -24,7 +26,7 @@ var (
 	streamTimeout time.Duration
 	m3u8          bool
 	emptyTimeout  time.Duration
-	bufferSize    int
+	bufferSize    = 4 * 1024 * 1024 // 4MB
 )
 
 //go:embed LICENSE.short
@@ -219,11 +221,17 @@ func parseArgs() {
 		LookupEnvOrDuration("ACEXY_EMPTY_TIMEOUT", 1*time.Minute),
 		"timeout in human-readable format to finish the stream when the source is empty. Can be set with ACEXY_EMPTY_TIMEOUT environment variable.",
 	)
-	flag.IntVar(
-		&bufferSize,
+	flag.Func(
 		"buffer-size",
-		LookupEnvOrInt("ACEXY_BUFFER_SIZE", 32768),
-		"buffer size (in bytes) to use when copying the data. Can be set with ACEXY_BUFFER_SIZE environment variable.",
+		"buffer size in human-readable format to use when copying the data. Can be set with ACEXY_BUFFER_SIZE environment variable.",
+		func(s string) error {
+			if size, err := humanize.ParseBytes(s); err != nil {
+				return err
+			} else {
+				bufferSize = int(size)
+			}
+			return nil
+		},
 	)
 	flag.Parse()
 }
@@ -250,6 +258,7 @@ func main() {
 		BufferSize:   bufferSize,
 	}
 	acexy.Init()
+	slog.Debug("Acexy", "acexy", acexy)
 
 	// Create a new HTTP server
 	proxy := &Proxy{Acexy: acexy}
