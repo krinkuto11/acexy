@@ -5,7 +5,6 @@ package acexy
 import (
 	"errors"
 	"fmt"
-	"net/url"
 )
 
 type AceID struct {
@@ -25,11 +24,6 @@ func NewAceID(id, infohash string) (AceID, error) {
 		return AceID{}, errors.New("only one of `id` or `infohash` can have a value")
 	}
 	return AceID{id: id, infohash: infohash}, nil
-}
-
-// Create a new `AceID` object from URL parameters
-func AceIDFromParams(params url.Values) (AceID, error) {
-	return NewAceID(params.Get("id"), params.Get("infohash"))
 }
 
 // Get the valid AceStream ID. If the `infohash` is set, it will be returned,
