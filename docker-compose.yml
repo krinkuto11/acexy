@@ -13,3 +13,4 @@ services:
       ACEXY_M3U8: "false"         # Disable M3U8 mode
       ACEXY_EMPTY_TIMEOUT: "60s"  # Timeout to close the connection if no data is received
       ACEXY_BUFFER_SIZE: 4MB      # Buffer size is 4MB
+      # EXTRA_FLAGS: ""           # Extra flags. Defaults to --cache-dir /tmp --cache-limit 2 --cache-auto 1 --log-stderr --log-stderr-level error

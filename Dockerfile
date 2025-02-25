@@ -16,6 +16,7 @@ FROM martinbjeldbak/acestream-http-proxy:2.3 AS final-stage
 COPY --link             bin/entrypoint /bin/entrypoint
 COPY --from=build-stage /acexy         /acexy
 EXPOSE 6878 8000
+ENV EXTRA_FLAGS="--cache-dir /tmp --cache-limit 2 --cache-auto 1 --log-stderr --log-stderr-level error"
 # USER acestream:acestream
 
 ENTRYPOINT [ "/bin/entrypoint" ]

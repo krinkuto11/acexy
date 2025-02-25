@@ -83,10 +83,12 @@ type Acexy struct {
 // the AceStream Middleware won't work.
 var middlewareClient = http.Client{
 	Transport: &http.Transport{
-		DisableCompression: true,
-		MaxIdleConns:       10,
-		MaxConnsPerHost:    10,
-		IdleConnTimeout:    30 * time.Second,
+		DisableCompression:    true,
+		MaxIdleConns:          10,
+		MaxConnsPerHost:       10,
+		IdleConnTimeout:       30 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	},
 }
 
@@ -171,6 +173,7 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	resp, err := middlewareClient.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
+		close(ongoingStream.done)
 		return err
 	}
 
@@ -229,12 +232,16 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 		// Remove the stream from the list
 		defer delete(a.streams, stream.ID)
 
+		slog.Debug("Stopping stream", "stream", stream.ID)
 		// Close the stream
 		if err := CloseStream(stream); err != nil {
 			slog.Warn("Error closing stream", "error", err)
 			return err
 		}
-		ongoingStream.player.Body.Close()
+		if ongoingStream.player != nil {
+			slog.Debug("Closing player", "stream", stream.ID)
+			ongoingStream.player.Body.Close()
+		}
 		<-ongoingStream.done
 		slog.Info("Stream done", "stream", stream.ID)
 	}
