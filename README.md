@@ -66,6 +66,9 @@ By default, the proxy will work in MPEG-TS mode. For switching between them,
 you must add the **`-m3u8` flag** or set **`ACEXY_M3U8=true` environment
 variable**.
 
+> **NOTE**: The HLS mode - `ACEXY_M3U8` or `-m3u8` flag - is in a non-tested
+> status. Using it is discouraged and not guaranteed to work.
+
 There is a single available endpoint: `/ace/getstream` which takes the same
 parameters as the standard
 [AceStream Middleware/HTTP API](https://docs.acestream.net/developers/api-reference/). Therefore, for running a stream, just open the following
