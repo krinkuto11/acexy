@@ -45,7 +45,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	// Verify the client has included the ID parameter
-	aceId, err := acexy.AceIDFromParams(q)
+	aceId, err := acexy.NewAceID(q.Get("id"), q.Get("infohash"))
 	if err != nil {
 		slog.Error("ID parameter is required", "path", r.URL.Path, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
