@@ -84,7 +84,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := p.Acexy.StartStream(stream, w); err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
-		p.Acexy.StopStream(stream, w)
 		return
 	}
 

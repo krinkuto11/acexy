@@ -173,7 +173,12 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	resp, err := middlewareClient.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
-		close(ongoingStream.done)
+		ongoingStream.clients--
+		if ongoingStream.clients == 0 {
+			if releaseErr := a.releaseStream(stream); releaseErr != nil {
+				slog.Warn("Error releasing stream", "error", releaseErr)
+			}
+		}
 		return err
 	}
 
@@ -186,8 +191,6 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	}
 
 	go func() {
-		defer close(ongoingStream.done)
-
 		// Start copying the stream
 		if err := ongoingStream.copier.Copy(); err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -197,9 +200,54 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 			}
 		}
 		slog.Debug("Copy done", "stream", stream.ID)
+		select {
+		case <-ongoingStream.done:
+			slog.Debug("Stream already closed", "stream", stream.ID)
+		default:
+			close(ongoingStream.done)
+			slog.Info("Stream done", "stream", stream.ID)
+		}
 	}()
 
 	ongoingStream.player = resp
+	return nil
+}
+
+// Releases a stream that is no longer being used. The stream is removed from the AceStream backend.
+// If the stream is not enqueued, an error is returned. If the stream has clients reproducing it,
+// the stream is not removed. The stream is identified by the “id“ identifier.
+//
+// Note: The global mutex is locked and unlocked by the caller.
+func (a *Acexy) releaseStream(stream *AceStream) error {
+	ongoingStream, ok := a.streams[stream.ID]
+	if !ok {
+		return fmt.Errorf(`stream "%s" not found`, stream.ID)
+	}
+	if ongoingStream.clients > 0 {
+		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
+	}
+
+	// Remove the stream from the list
+	defer delete(a.streams, stream.ID)
+	slog.Debug("Stopping stream", "stream", stream.ID)
+	// Close the stream
+	if err := CloseStream(stream); err != nil {
+		slog.Warn("Error closing stream", "error", err)
+		return err
+	}
+	if ongoingStream.player != nil {
+		slog.Debug("Closing player", "stream", stream.ID)
+		ongoingStream.player.Body.Close()
+	}
+
+	// Close the `done' channel
+	select {
+	case <-ongoingStream.done:
+		slog.Debug("Stream already closed", "stream", stream.ID)
+	default:
+		close(ongoingStream.done)
+		slog.Info("Stream done", "stream", stream.ID)
+	}
 	return nil
 }
 
@@ -229,21 +277,10 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 
 	// Check if we have to stop the stream
 	if ongoingStream.clients == 0 {
-		// Remove the stream from the list
-		defer delete(a.streams, stream.ID)
-
-		slog.Debug("Stopping stream", "stream", stream.ID)
-		// Close the stream
-		if err := CloseStream(stream); err != nil {
-			slog.Warn("Error closing stream", "error", err)
+		if err := a.releaseStream(stream); err != nil {
+			slog.Warn("Error releasing stream", "error", err)
 			return err
 		}
-		if ongoingStream.player != nil {
-			slog.Debug("Closing player", "stream", stream.ID)
-			ongoingStream.player.Body.Close()
-		}
-		<-ongoingStream.done
-		slog.Info("Stream done", "stream", stream.ID)
 	}
 	return nil
 }
