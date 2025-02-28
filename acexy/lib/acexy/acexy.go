@@ -66,30 +66,18 @@ type ongoingStream struct {
 
 // Structure referencing the AceStream Proxy - this is, ourselves
 type Acexy struct {
-	Scheme       string        // The scheme to be used when connecting to the AceStream middleware
-	Host         string        // The host to be used when connecting to the AceStream middleware
-	Port         int           // The port to be used when connecting to the AceStream middleware
-	Endpoint     AcexyEndpoint // The endpoint to be used when connecting to the AceStream middleware
-	EmptyTimeout time.Duration // Timeout after which, if no data is written, the stream is closed
-	BufferSize   int           // The buffer size to use when copying the data
+	Scheme            string        // The scheme to be used when connecting to the AceStream middleware
+	Host              string        // The host to be used when connecting to the AceStream middleware
+	Port              int           // The port to be used when connecting to the AceStream middleware
+	Endpoint          AcexyEndpoint // The endpoint to be used when connecting to the AceStream middleware
+	EmptyTimeout      time.Duration // Timeout after which, if no data is written, the stream is closed
+	BufferSize        int           // The buffer size to use when copying the data
+	NoResponseTimeout time.Duration // Timeout to wait for a response from the AceStream middleware
 
 	// Information about ongoing streams
-	streams map[AceID]*ongoingStream
-	mutex   *sync.Mutex
-}
-
-// The transport to be used when connecting to the AceStream middleware. We have to tweak it
-// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
-// the AceStream Middleware won't work.
-var middlewareClient = http.Client{
-	Transport: &http.Transport{
-		DisableCompression:    true,
-		MaxIdleConns:          10,
-		MaxConnsPerHost:       10,
-		IdleConnTimeout:       30 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
+	streams    map[AceID]*ongoingStream
+	mutex      *sync.Mutex
+	middleware *http.Client
 }
 
 type AcexyEndpoint string
@@ -104,6 +92,19 @@ const (
 func (a *Acexy) Init() {
 	a.streams = make(map[AceID]*ongoingStream)
 	a.mutex = &sync.Mutex{}
+	// The transport to be used when connecting to the AceStream middleware. We have to tweak it
+	// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
+	// the AceStream Middleware won't work.
+	a.middleware = &http.Client{
+		Transport: &http.Transport{
+			DisableCompression:    true,
+			MaxIdleConns:          10,
+			MaxConnsPerHost:       10,
+			IdleConnTimeout:       30 * time.Second,
+			ResponseHeaderTimeout: a.NoResponseTimeout,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }
 
 // Starts a new stream. The stream is enqueued in the AceStream backend, returning a playback
@@ -170,10 +171,15 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 		return nil
 	}
 
-	resp, err := middlewareClient.Get(stream.PlaybackURL)
+	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
-		close(ongoingStream.done)
+		ongoingStream.clients--
+		if ongoingStream.clients == 0 {
+			if releaseErr := a.releaseStream(stream); releaseErr != nil {
+				slog.Warn("Error releasing stream", "error", releaseErr)
+			}
+		}
 		return err
 	}
 
@@ -186,8 +192,6 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	}
 
 	go func() {
-		defer close(ongoingStream.done)
-
 		// Start copying the stream
 		if err := ongoingStream.copier.Copy(); err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -197,9 +201,54 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 			}
 		}
 		slog.Debug("Copy done", "stream", stream.ID)
+		select {
+		case <-ongoingStream.done:
+			slog.Debug("Stream already closed", "stream", stream.ID)
+		default:
+			close(ongoingStream.done)
+			slog.Info("Stream done", "stream", stream.ID)
+		}
 	}()
 
 	ongoingStream.player = resp
+	return nil
+}
+
+// Releases a stream that is no longer being used. The stream is removed from the AceStream backend.
+// If the stream is not enqueued, an error is returned. If the stream has clients reproducing it,
+// the stream is not removed. The stream is identified by the “id“ identifier.
+//
+// Note: The global mutex is locked and unlocked by the caller.
+func (a *Acexy) releaseStream(stream *AceStream) error {
+	ongoingStream, ok := a.streams[stream.ID]
+	if !ok {
+		return fmt.Errorf(`stream "%s" not found`, stream.ID)
+	}
+	if ongoingStream.clients > 0 {
+		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
+	}
+
+	// Remove the stream from the list
+	defer delete(a.streams, stream.ID)
+	slog.Debug("Stopping stream", "stream", stream.ID)
+	// Close the stream
+	if err := CloseStream(stream); err != nil {
+		slog.Warn("Error closing stream", "error", err)
+		return err
+	}
+	if ongoingStream.player != nil {
+		slog.Debug("Closing player", "stream", stream.ID)
+		ongoingStream.player.Body.Close()
+	}
+
+	// Close the `done' channel
+	select {
+	case <-ongoingStream.done:
+		slog.Debug("Stream already closed", "stream", stream.ID)
+	default:
+		close(ongoingStream.done)
+		slog.Info("Stream done", "stream", stream.ID)
+	}
 	return nil
 }
 
@@ -229,21 +278,10 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 
 	// Check if we have to stop the stream
 	if ongoingStream.clients == 0 {
-		// Remove the stream from the list
-		defer delete(a.streams, stream.ID)
-
-		slog.Debug("Stopping stream", "stream", stream.ID)
-		// Close the stream
-		if err := CloseStream(stream); err != nil {
-			slog.Warn("Error closing stream", "error", err)
+		if err := a.releaseStream(stream); err != nil {
+			slog.Warn("Error releasing stream", "error", err)
 			return err
 		}
-		if ongoingStream.player != nil {
-			slog.Debug("Closing player", "stream", stream.ID)
-			ongoingStream.player.Body.Close()
-		}
-		<-ongoingStream.done
-		slog.Info("Stream done", "stream", stream.ID)
 	}
 	return nil
 }

@@ -19,14 +19,15 @@ import (
 )
 
 var (
-	addr          string
-	scheme        string
-	host          string
-	port          int
-	streamTimeout time.Duration
-	m3u8          bool
-	emptyTimeout  time.Duration
-	size          Size
+	addr              string
+	scheme            string
+	host              string
+	port              int
+	streamTimeout     time.Duration
+	m3u8              bool
+	emptyTimeout      time.Duration
+	size              Size
+	noResponseTimeout time.Duration
 )
 
 //go:embed LICENSE.short
@@ -84,7 +85,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := p.Acexy.StartStream(stream, w); err != nil {
 		slog.Error("Failed to start stream", "error", err)
 		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
-		p.Acexy.StopStream(stream, w)
 		return
 	}
 
@@ -214,31 +214,32 @@ func parseArgs() {
 		&addr,
 		"addr",
 		LookupEnvOrString("ACEXY_LISTEN_ADDR", ":8080"),
-		"address to listen on. Can be set with ACEXY_LISTEN_ADDR environment variable.",
+		"address to listen on. Can be set with ACEXY_LISTEN_ADDR environment variable",
 	)
 	flag.StringVar(
 		&scheme,
 		"scheme",
 		LookupEnvOrString("ACEXY_SCHEME", "http"),
-		"scheme to use for the AceStream middleware. Can be set with ACEXY_SCHEME environment variable.",
+		"scheme to use for the AceStream middleware. Can be set with ACEXY_SCHEME environment variable",
 	)
 	flag.StringVar(
 		&host,
 		"acestream-host",
 		LookupEnvOrString("ACEXY_HOST", "localhost"),
-		"host to use for the AceStream middleware. Can be set with ACEXY_HOST environment variable.",
+		"host to use for the AceStream middleware. Can be set with ACEXY_HOST environment variable",
 	)
 	flag.IntVar(
 		&port,
 		"acestream-port",
 		LookupEnvOrInt("ACEXY_PORT", 6878),
-		"port to use for the AceStream middleware. Can be set with ACEXY_PORT environment variable.",
+		"port to use for the AceStream middleware. Can be set with ACEXY_PORT environment variable",
 	)
 	flag.DurationVar(
 		&streamTimeout,
 		"m3u8-stream-timeout",
 		LookupEnvOrDuration("ACEXY_M3U8_STREAM_TIMEOUT", 60*time.Second),
-		"timeout in human-readable format to finish the stream. Can be set with ACEXY_M3U8_STREAM_TIMEOUT environment variable.",
+		"timeout in human-readable format to finish the stream. "+
+			"Can be set with ACEXY_M3U8_STREAM_TIMEOUT environment variable",
 	)
 	flag.BoolVar(
 		&m3u8,
@@ -250,12 +251,22 @@ func parseArgs() {
 		&emptyTimeout,
 		"empty-timeout",
 		LookupEnvOrDuration("ACEXY_EMPTY_TIMEOUT", 1*time.Minute),
-		"timeout in human-readable format to finish the stream when the source is empty. Can be set with ACEXY_EMPTY_TIMEOUT environment variable.",
+		"timeout in human-readable format to finish the stream when the source is empty. "+
+			"Can be set with ACEXY_EMPTY_TIMEOUT environment variable",
 	)
 	flag.Var(
 		LookupEnvOrSize("ACEXY_BUFFER_SIZE", 4*1024*1024),
 		"buffer-size",
-		"buffer size in human-readable format to use when copying the data. Can be set with ACEXY_BUFFER_SIZE environment variable.",
+		"buffer size in human-readable format to use when copying the data. "+
+			"Can be set with ACEXY_BUFFER_SIZE environment variable",
+	)
+	flag.DurationVar(
+		&noResponseTimeout,
+		"no-response-timeout",
+		LookupEnvOrDuration("ACEXY_NO_RESPONSE_TIMEOUT", 1*time.Second),
+		"timeout in human-readable format to wait for a response from the AceStream middleware. "+
+			"Can be set with ACEXY_NO_RESPONSE_TIMEOUT environment variable. "+
+			"Depending on the network conditions, you may want to adjust this value",
 	)
 	flag.Parse()
 }
@@ -274,12 +285,13 @@ func main() {
 	}
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
-		Scheme:       scheme,
-		Host:         host,
-		Port:         port,
-		Endpoint:     endpoint,
-		EmptyTimeout: emptyTimeout,
-		BufferSize:   int(size.Bytes),
+		Scheme:            scheme,
+		Host:              host,
+		Port:              port,
+		Endpoint:          endpoint,
+		EmptyTimeout:      emptyTimeout,
+		BufferSize:        int(size.Bytes),
+		NoResponseTimeout: noResponseTimeout,
 	}
 	acexy.Init()
 	slog.Debug("Acexy", "acexy", acexy)
