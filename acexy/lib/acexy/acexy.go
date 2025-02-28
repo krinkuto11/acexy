@@ -66,30 +66,18 @@ type ongoingStream struct {
 
 // Structure referencing the AceStream Proxy - this is, ourselves
 type Acexy struct {
-	Scheme       string        // The scheme to be used when connecting to the AceStream middleware
-	Host         string        // The host to be used when connecting to the AceStream middleware
-	Port         int           // The port to be used when connecting to the AceStream middleware
-	Endpoint     AcexyEndpoint // The endpoint to be used when connecting to the AceStream middleware
-	EmptyTimeout time.Duration // Timeout after which, if no data is written, the stream is closed
-	BufferSize   int           // The buffer size to use when copying the data
+	Scheme            string        // The scheme to be used when connecting to the AceStream middleware
+	Host              string        // The host to be used when connecting to the AceStream middleware
+	Port              int           // The port to be used when connecting to the AceStream middleware
+	Endpoint          AcexyEndpoint // The endpoint to be used when connecting to the AceStream middleware
+	EmptyTimeout      time.Duration // Timeout after which, if no data is written, the stream is closed
+	BufferSize        int           // The buffer size to use when copying the data
+	NoResponseTimeout time.Duration // Timeout to wait for a response from the AceStream middleware
 
 	// Information about ongoing streams
-	streams map[AceID]*ongoingStream
-	mutex   *sync.Mutex
-}
-
-// The transport to be used when connecting to the AceStream middleware. We have to tweak it
-// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
-// the AceStream Middleware won't work.
-var middlewareClient = http.Client{
-	Transport: &http.Transport{
-		DisableCompression:    true,
-		MaxIdleConns:          10,
-		MaxConnsPerHost:       10,
-		IdleConnTimeout:       30 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
+	streams    map[AceID]*ongoingStream
+	mutex      *sync.Mutex
+	middleware *http.Client
 }
 
 type AcexyEndpoint string
@@ -104,6 +92,19 @@ const (
 func (a *Acexy) Init() {
 	a.streams = make(map[AceID]*ongoingStream)
 	a.mutex = &sync.Mutex{}
+	// The transport to be used when connecting to the AceStream middleware. We have to tweak it
+	// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
+	// the AceStream Middleware won't work.
+	a.middleware = &http.Client{
+		Transport: &http.Transport{
+			DisableCompression:    true,
+			MaxIdleConns:          10,
+			MaxConnsPerHost:       10,
+			IdleConnTimeout:       30 * time.Second,
+			ResponseHeaderTimeout: a.NoResponseTimeout,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }
 
 // Starts a new stream. The stream is enqueued in the AceStream backend, returning a playback
@@ -170,7 +171,7 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 		return nil
 	}
 
-	resp, err := middlewareClient.Get(stream.PlaybackURL)
+	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
 		ongoingStream.clients--
