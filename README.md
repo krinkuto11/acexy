@@ -3,6 +3,16 @@
 [![Go Build](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml/badge.svg)](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml)
 [![Docker Release](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml/badge.svg?event=release)](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml)
 
+## Table of Contents
+
+- [How It Works? 🛠](#how-it-works-)
+- [Key Features 🔗](#key-features-)
+- [Usage 📐](#usage-)
+- [Optimizing 🚀](#optimizing-)
+  - [Alternative 🧃](#alternative-)
+
+## How It Works? 🛠
+
 This project is a wrapper around the
 [AceStream middleware HTTP API](https://docs.acestream.net/developers/start-playback/#using-middleware), allowing both
 [HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming) and
@@ -56,7 +66,7 @@ The latest release is available at the [releases page](/releases/latest),
 but picking a fixed version is recommended. To run the container, just issue:
 
 ```shell
-docker run -t -p 6878:6878 -p 8080:8080 ghcr.io/javinator9889/acexy
+docker run -t -p 8080:8080 ghcr.io/javinator9889/acexy
 ```
 
 > **NOTE**: For your convenience, a `docker-compose.yml` file is given with
@@ -80,3 +90,47 @@ http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
 
 where `dd1e67078381739d14beca697356ab76d49d1a2` is the ID of the AceStream 
 channel.
+
+## Optimizing 🚀
+
+The AceStream Engine running behind of the proxy has a number of ports that can
+be exposed to optimize the performance. Those are, by default:
+
+- `8621/tcp`
+- `8621/udp`
+
+> NOTE: They can be adjusted through the `EXTRA_FLAGS` variable - within Docker - by
+> using the `--port` flag.
+
+Exposing those ports should help getting a more stable streaming experience. Notice
+that you will need to open up those ports on your gateway too.
+
+For reference, this is how you should run the Docker command:
+
+```shell
+docker run -t -p 8080:8080 -p 8621:8621 ghcr.io/javinator9889/acexy
+```
+
+### Alternative 🧃
+
+AceStream underneath attempts to use UPnP IGD to connect against a remote machine.
+The problem is that this is not working because of the bridging layer added by Docker
+(see: https://docs.docker.com/engine/network/drivers/bridge/).
+
+If you are running a single instance of Acexy - and a single instance of AceStream -
+it should be safe for you to run the container with *host networking*. This means:
+
+- The container **can access** any other application bridged to your main network.
+- You **don't need** to expose any ports.
+- Performance **is optimized** a little bit.
+
+> NOTE: This only works on Linux environments. See https://docs.docker.com/engine/network/drivers/host/
+> for more information.
+
+The command is quite straightforward:
+
+```shell
+docker run -t --network host ghcr.io/javinator9889/acexy
+```
+
+That should enable AceStream to use UPnP freely.
