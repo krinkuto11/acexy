@@ -20,6 +20,22 @@ That's awesome 🦋!! First, before going straight to the [Issues](https://githu
 clear description**, as much relevant information as possible, and a **code sample or executable
 test case** demonstrating the expected behavior that is not occurring.
 
+Acexy tries to not output too much messages at a time. However, it has the debug mode
+available to capture as much information as possible. When filling a bug, remember always to:
+
+- Add the exact steps you took for us to reproduce the issue.
+- Run the program setting `ACEXY_LOG_LEVEL=DEBUG` and grab **all the output**.
+- Remember adding all the relevant information about your system, such as:
+  - The Acexy version.
+  - Whether you are running it inside Docker or not.
+    - If so, the Docker version you are using, and the Acexy's Docker Image tag.
+  - Your host OS - either it is Linux, Windows, or macOS.
+  - The exact configuration you are using to run Acexy and AceStream - the `EXTRA_FLAGS` variable,
+    the Acexy's environment variables, etc.
+
+That all information helps us a lot when fixing problems. Do not hesitate contacting us if
+you need any help.
+
 ### Did you write a patch that fixes it?
 
 WOW!! THAT'S A STEP FURTHER!! Go ahead and create a GitHub Pull Request. Don't you know where

@@ -28,6 +28,9 @@ body:
         Tell us what you have seen. What did you expect to happen? What actually happened?
         There are more details about how to fill the report in the
         [CONTRIBUTING.md](/CONTRIBUTING.md) file.
+
+        Remember to include any error messages you received. Enable the debug mode in Acexy
+        - setting the ACEXY_LOG_LEVEL=DEBUG environment variable - to get more detailed logs.
     validations:
       required: true
 
