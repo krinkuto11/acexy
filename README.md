@@ -10,6 +10,7 @@
 - [Usage 📐](#usage-)
 - [Optimizing 🚀](#optimizing-)
   - [Alternative 🧃](#alternative-)
+- [Configuration Options ⚙](#configuration-options-)
 
 ## How It Works? 🛠
 
@@ -81,8 +82,8 @@ variable**.
 
 There is a single available endpoint: `/ace/getstream` which takes the same
 parameters as the standard
-[AceStream Middleware/HTTP API](https://docs.acestream.net/developers/api-reference/). Therefore, for running a stream, just open the following
-link in your preferred application - such as VLC:
+[AceStream Middleware/HTTP API](https://docs.acestream.net/developers/api-reference/). Therefore,
+for running a stream, just open the following link in your preferred application - such as VLC:
 
 ```
 http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
@@ -134,3 +135,120 @@ docker run -t --network host ghcr.io/javinator9889/acexy
 ```
 
 That should enable AceStream to use UPnP freely.
+
+## Configuration Options ⚙
+
+Acexy has tons of configuration options that allow you to customize the behavior. All of them have
+default values that were tested for the optimal experience, but you may need to adjust them
+to fit your needs.
+
+> **PRO-TIP**: You can issue `acexy -help` to have a complete view of all the available options.
+
+As Acexy was thought to be run inside a Docker container, all the variables and settings are
+adjustable by using environment variables.
+
+
+<table>
+  <thead>
+    <tr>
+      <th>Flag</th>
+      <th>Environment Variable</th>
+      <th>Description</th>
+      <th>Default</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th><code>-license</code></th>
+      <th>-</th>
+      <th>Prints the program license and exits</th>
+      <th>-</th>
+    <tr>
+    <tr>
+      <th><code>-help</code></th>
+      <th>-</th>
+      <th>Prints the help message and exits</th>
+      <th>-</th>
+    <tr>
+    <tr>
+      <th><code>-addr</code></th>
+      <th><code>ACEXY_LISTEN_ADDR</code></th>
+      <th>Address where Acexy is listening to. Useful when running in <code>host</code> mode.</th>
+      <th><code>:8080</code></th>
+    <tr>
+    <tr>
+      <th><code>-scheme</code></th>
+      <th><code>ACEXY_SCHEME</code></th>
+      <th>
+        The scheme of the AceStream middleware. If you have configured AceStream to work in HTTPS,
+        you will have to tweak this value.
+      </th>
+      <th><code>http</code></th>
+    <tr>
+    <tr>
+      <th><code>-acestream-host</code></th>
+      <th><code>ACEXY_HOST</code></th>
+      <th>
+        Where the AceStream middleware is located. Change it if you need Acexy to connect to a
+        different AceStream Engine.
+      </th>
+      <th><code>localhost</code></th>
+    <tr>
+    <tr>
+      <th><code>-acestream-port</code></th>
+      <th><code>ACEXY_PORT</code></th>
+      <th>
+        The port to connect to the AceStream middleware. Change it if you need Acexy to connect
+        to a different AceStream Engine.
+      </th>
+      <th><code>6878</code></th>
+    <tr>
+    <tr>
+      <th><code>-m3u8-stream-timeout</code></th>
+      <th><code>ACEXY_M3U8_STREAM_TIMEOUT</code></th>
+      <th>
+        When running Acexy in M3U8 mode, the timeout to consider a stream is done.
+      </th>
+      <th><code>60s</code></th>
+    <tr>
+    <tr>
+      <th><code>-m3u8</code></th>
+      <th><code>ACEXY_M3U8</code></th>
+      <th>
+        Enable M3U8 mode in Acexy. <b>WARNING</b>: This mode is experimental and may not work as expected.
+      </th>
+      <th>Disabled</th>
+    <tr>
+    <tr>
+      <th><code>-empty-timeout</code></th>
+      <th><code>ACEXY_EMPTY_TIMEOUT</code></th>
+      <th>
+        Timeout to consider a stream is finished once empty information is received from
+        the middleware. Useless when in M3U8 mode.
+      </th>
+      <th><code>1m</code></th>
+    <tr>
+    <tr>
+      <th><code>-buffer-size</code></th>
+      <th><code>ACEXY_BUFFER_SIZE</code></th>
+      <th>
+        Buffers up-to <code>buffer-size</code> bytes of a stream before copying the data to the
+        player. Useful to have better stability during plays.
+      </th>
+      <th><code>4.2MiB</code></th>
+    <tr>
+    <tr>
+      <th><code>-no-response-timeout</code></th>
+      <th><code>ACEXY_NO_RESPONSE_TIMEOUT</code></th>
+      <th>
+        Time to wait for the AceStream middleware to return a response for a newly opened stream.
+        This must be as low as possible unless your Internet connection is really bad
+        (ie: You have very big latencies).
+      </th>
+      <th><code>1s</code></th>
+    <tr>
+  </tbody>
+</table>
+
+> **NOTE**: The list of options is extensive but could be outdated. Always refer to the
+> Acexy binary `-help` output when in doubt.
