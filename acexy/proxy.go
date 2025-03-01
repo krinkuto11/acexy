@@ -86,8 +86,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Gather the stream information
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
-		slog.Error("Failed to start stream", "error", err)
-		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
+		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -97,8 +97,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// pass it directly.
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	if err := p.Acexy.StartStream(stream, w); err != nil {
-		slog.Error("Failed to start stream", "error", err)
-		http.Error(w, "Failed to start stream", http.StatusInternalServerError)
+		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
