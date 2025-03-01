@@ -6,6 +6,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"javinator9889/acexy/lib/acexy"
@@ -46,6 +47,19 @@ type Size struct {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case APIv1_URL + "/getstream":
+		fallthrough
+	case APIv1_URL + "/getstream/":
+		p.HandleStream(w, r)
+	case APIv1_URL + "/status":
+		p.HandleStatus(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Verify the request method
 	if r.Method != http.MethodGet {
 		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
@@ -119,6 +133,45 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("Client disconnected", "path", r.URL.Path)
 	case <-p.Acexy.WaitStream(stream):
 		slog.Debug("Stream finished", "path", r.URL.Path)
+	}
+}
+
+func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var aceId *acexy.AceID
+	q := r.URL.Query()
+	slog.Debug("Status request", "path", r.URL.Path, "query", q)
+	id, err := acexy.NewAceID(q.Get("id"), q.Get("infohash"))
+	if err == nil {
+		aceId = &id
+	} else {
+		// If no parameter is included, ask for the global status
+		aceId = nil
+	}
+
+	// Get the status of the stream
+	slog.Debug("Getting status", "id", aceId)
+	status, err := p.Acexy.GetStatus(aceId)
+	if err != nil {
+		slog.Error("Failed to get status", "error", err)
+		http.Error(w, "Stream not found", http.StatusNotFound)
+		return
+	}
+
+	slog.Debug("Status", "status", status)
+	// Write the status to the client as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	if err := json.NewEncoder(w).Encode(status); err != nil {
+		slog.Error("Failed to write status", "error", err)
+		http.Error(w, "Failed to write status", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -301,6 +354,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
+	mux.Handle(APIv1_URL+"/status", proxy)
 	mux.Handle("/", http.NotFoundHandler())
 
 	// Start the HTTP server

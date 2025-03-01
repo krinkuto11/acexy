@@ -46,6 +46,13 @@ type AceStreamCommand struct {
 	Error    string `json:"error"`
 }
 
+type AcexyStatus struct {
+	Clients *uint  `json:"clients,omitempty"`
+	Streams *uint  `json:"streams,omitempty"`
+	ID      *AceID `json:"stream_id,omitempty"`
+	StatURL string `json:"stat_url,omitempty"`
+}
+
 // The stream information is stored in a structure referencing the `AceStreamResponse`
 // plus some extra information to determine whether we should keep the stream alive or not.
 type AceStream struct {
@@ -397,6 +404,31 @@ func CloseStream(stream *AceStream) error {
 		return err
 	}
 	return nil
+}
+
+// Gets the status of a stream. If the `id` parameter is nil, the global status is returned.
+// If the stream is not enqueued, an error is returned. The stream is identified by the “id“
+// identifier.
+func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	// Return the global status if no ID is given
+	if id == nil {
+		streams := uint(len(a.streams))
+		return AcexyStatus{Streams: &streams}, nil
+	}
+
+	// Check if the stream is already enqueued
+	if stream, ok := a.streams[*id]; ok {
+		return AcexyStatus{
+			Clients: &stream.clients,
+			ID:      id,
+			StatURL: stream.stream.StatURL,
+		}, nil
+	}
+
+	return AcexyStatus{}, fmt.Errorf(`stream "%s" not found`, id)
 }
 
 // Creates a timeout channel that will be closed after the given timeout
