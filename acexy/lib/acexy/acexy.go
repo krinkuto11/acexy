@@ -157,6 +157,7 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	// Get the ongoing stream
 	ongoingStream, ok := a.streams[stream.ID]
 	if !ok {
+		slog.Debug("Stream not found", "stream", stream.ID)
 		return fmt.Errorf(`stream "%s" not found`, stream.ID)
 	}
 
@@ -195,9 +196,9 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 		// Start copying the stream
 		if err := ongoingStream.copier.Copy(); err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				slog.Info("Client closed connection", "stream", stream.ID)
+				slog.Debug("Connection closed", "stream", stream.ID)
 			} else {
-				slog.Warn("Failed to copy response body", "error", err)
+				slog.Debug("Failed to copy response body", "stream", stream.ID, "error", err)
 			}
 		}
 		slog.Debug("Copy done", "stream", stream.ID)
@@ -206,7 +207,7 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 			slog.Debug("Stream already closed", "stream", stream.ID)
 		default:
 			close(ongoingStream.done)
-			slog.Info("Stream done", "stream", stream.ID)
+			slog.Debug("Stream closed", "stream", stream.ID)
 		}
 	}()
 
@@ -233,7 +234,7 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 	slog.Debug("Stopping stream", "stream", stream.ID)
 	// Close the stream
 	if err := CloseStream(stream); err != nil {
-		slog.Warn("Error closing stream", "error", err)
+		slog.Debug("Error closing stream", "error", err)
 		return err
 	}
 	if ongoingStream.player != nil {
@@ -247,7 +248,7 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 		slog.Debug("Stream already closed", "stream", stream.ID)
 	default:
 		close(ongoingStream.done)
-		slog.Info("Stream done", "stream", stream.ID)
+		slog.Debug("Stream done", "stream", stream.ID)
 	}
 	return nil
 }
@@ -262,6 +263,7 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 	// Get the ongoing stream
 	ongoingStream, ok := a.streams[stream.ID]
 	if !ok {
+		slog.Debug("Stream not found", "stream", stream.ID)
 		return fmt.Errorf(`stream "%s" not found`, stream.ID)
 	}
 
@@ -271,7 +273,7 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 	// Unregister the client
 	if ongoingStream.clients > 0 {
 		ongoingStream.clients--
-		slog.Debug("Client stopped", "stream", stream.ID, "clients", ongoingStream.clients)
+		slog.Info("Client stopped", "stream", stream.ID, "clients", ongoingStream.clients)
 	} else {
 		slog.Warn("Stream has no clients", "stream", stream.ID)
 	}
@@ -282,6 +284,7 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 			slog.Warn("Error releasing stream", "error", err)
 			return err
 		}
+		slog.Info("Stream done", "stream", stream.ID)
 	}
 	return nil
 }
@@ -319,7 +322,7 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 	// This prevents errors when multiple streams are accessed at the same time. Because of
 	// using the UUID package, we can be sure that the PID is unique.
 	pid := uuid.NewString()
-	slog.Info("Temporary PID", "pid", pid, "stream", aceId)
+	slog.Debug("Temporary PID", "pid", pid, "stream", aceId)
 	if extraParams == nil {
 		extraParams = req.URL.Query()
 	}
@@ -335,7 +338,7 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		slog.Warn("Error getting stream", "error", err)
+		slog.Debug("Error getting stream", "error", err)
 		return nil, err
 	}
 	slog.Debug("Stream response", "statusCode", res.StatusCode, "headers", res.Header, "res", res)
@@ -344,19 +347,19 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 	// Read the response into the body
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		slog.Warn("Error reading stream response", "error", err)
+		slog.Debug("Error reading stream response", "error", err)
 		return nil, err
 	}
 
 	slog.Debug("Stream response", "response", string(body))
 	var response AceStreamMiddleware
 	if err := json.Unmarshal(body, &response); err != nil {
-		slog.Warn("Error unmarshalling stream response", "error", err)
+		slog.Debug("Error unmarshalling stream response", "error", err)
 		return nil, err
 	}
 
 	if response.Error != "" {
-		slog.Warn("Error in stream response", "error", response.Error)
+		slog.Debug("Error in stream response", "error", response.Error)
 		return nil, errors.New(response.Error)
 	}
 	return &response, nil
@@ -385,16 +388,19 @@ func CloseStream(stream *AceStream) error {
 	// Read the response into the body
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
+		slog.Debug("Error reading stream response", "error", err)
 		return err
 	}
 
 	var response AceStreamCommand
 	if err := json.Unmarshal(body, &response); err != nil {
+		slog.Debug("Error unmarshalling stream response", "error", err)
 		return err
 	}
 
 	if response.Error != "" {
-		return err
+		slog.Debug("Error in stream response", "error", response.Error)
+		return errors.New(response.Error)
 	}
 	return nil
 }
