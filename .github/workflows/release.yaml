@@ -30,6 +30,8 @@ jobs:
               uses: docker/metadata-action@v5
               with:
                 images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                flavor: |
+                  latest=${{ !github.event.release.prerelease }}
 
             - name: Set up QEMU
               uses: docker/setup-qemu-action@v3
