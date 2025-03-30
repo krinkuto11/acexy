@@ -63,15 +63,32 @@ With this proxy, the following architecture is now possible:
 `acexy` is available and published as a Docker image. Make sure you have
 the latest [Docker](https://docker.com) image installed and available.
 
-The latest release is available at the [releases page](/releases/latest),
-but picking a fixed version is recommended. To run the container, just issue:
+The Acexy container will connect against an AceStream server. You need to
+deploy either a Docker image, and link Acexy within the same network; Or
+have a running AceStream version on your host and run Acexy in host-networked
+mode.
+
+> **INFO**: There is a `docker-compose.yml` file in the repo you can directly
+> use to launch the whole block. This is **the recommended setup starting
+> from `v0.2.0`**.
+
+To run the services block, first grab the `docker-compose.yml` file, and run:
 
 ```shell
-docker run -t -p 8080:8080 ghcr.io/javinator9889/acexy
+wget https://raw.githubusercontent.com/Javinator9889/acexy/refs/heads/main/docker-compose.yml
+docker compose run -d
+```
+
+If you don't want to use Docker Compose, assuming you already have an
+AceStream server, another way could be:
+
+```shell
+docker run --network host ghcr.io/javinator9889/acexy
 ```
 
 > **NOTE**: For your convenience, a `docker-compose.yml` file is given with
-> all the possible adjustable parameters.
+> all the possible adjustable parameters. It should be ready to run, and it's
+> the recommended way starting from `v0.2.0`.
 
 By default, the proxy will work in MPEG-TS mode. For switching between them,
 you must add the **`-m3u8` flag** or set **`ACEXY_M3U8=true` environment
