@@ -1,20 +1,20 @@
 services:
   acexy:
-    image: ghcr.io/javinator9889/acexy
+    image: ghcr.io/javinator9889/acexy:0.2.0
     ports:
-      - "8080:8080"
+      - 8080:8080/tcp
     environment:
       ACEXY_LISTEN_ADDR: ":8080"  # Listen on port 8080
       ACEXY_SCHEME: "http"        # Use HTTP
-      ACEXY_HOST: "localhost"     # Host is localhost
+      ACEXY_HOST: "acestream"     # Host is "acestream" or the name of the AceStream service
       ACEXY_PORT: "6878"          # Port is 6878
       ACEXY_M3U8_STREAM_TIMEOUT: "60s"  # Timeout is 60 seconds when in M3U8 mode
       ACEXY_M3U8: "false"         # Disable M3U8 mode
       ACEXY_EMPTY_TIMEOUT: "60s"  # Timeout to close the connection if no data is received
       ACEXY_BUFFER_SIZE: 4MB      # Buffer size is 4MB
-      ACEXY_NO_RESPONSE_TIMEOUT: "1s"  # Timeout to close the connection if no response is received
-    networks:
-      - backend
+      ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
+    links:
+      - acestream
     depends_on:
       - acestream
 
@@ -23,11 +23,6 @@ services:
     # you can expose here the ports if you want to access the acestream service directly
     # ports:
     #   - "6878:6878"
-    environment:
+    # environment:
       # Flags for the AceStream server
       # EXTRA_FLAGS: "--cache-dir /tmp --cache-limit 2 --cache-auto 1 --log-stderr --log-stderr-level error"
-    networks:
-      - backend
-
-networks:
-  backend:
