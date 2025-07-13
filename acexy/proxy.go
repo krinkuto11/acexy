@@ -98,9 +98,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	username := q.Get("user")
 
-	//DEBUG
-	slog.Debug("Extracted username", "username", username)
-	//DEBUG
+
 
 	if err := p.Acexy.StartStream(stream, w, username); err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
@@ -108,9 +106,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//DEBUG
-	slog.Debug("Stream started", "stream", aceId, "username", username)
-	//DEBUG
 
 	// Update the client headers
 	w.WriteHeader(http.StatusOK)
@@ -172,9 +167,7 @@ func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Stream not found", http.StatusNotFound)
 		return
 	}
-	//DEBUG
-	slog.Debug("Responding with status", "status", status)
-	//DEBUG
+
 	slog.Debug("Status", "status", status)
 	// Write the status to the client as JSON
 	w.Header().Set("Content-Type", "application/json")

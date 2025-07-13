@@ -175,17 +175,14 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer, username string) e
 	// Add the writer to the list of writers
 	ongoingStream.writers.Add(out)
 
-	//DEBUG
-	slog.Debug("Adding writer", "writer", out)
+
 	// Add the username
 	ongoingStream.users[out] = username
-	//DEBUG
-	slog.Debug("Tracking user", "username", username, "writer", out)
+
 
 	// Register the new client
 	ongoingStream.clients++
-	//DEBUG
-	slog.Debug("Registered client", "clients", ongoingStream.clients)
+
 
 
 
