@@ -160,7 +160,7 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 	return stream, nil
 }
 
-func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
+func (a *Acexy) StartStream(stream *AceStream, out io.Writer, username string) error {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 
@@ -174,12 +174,13 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	// Add the writer to the list of writers
 	ongoingStream.writers.Add(out)
 
+	// Add the username
+	ongoingStream.users[out] = username
+	
 	// Register the new client
 	ongoingStream.clients++
 
-	//Register the stream user
-	username := extraParams.Get("user")
-	ongoingStream.users[out] = username
+
 
 	// Check if the stream is already being played
 	if ongoingStream.player != nil {

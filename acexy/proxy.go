@@ -96,7 +96,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
 	// pass it directly.
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
-	if err := p.Acexy.StartStream(stream, w); err != nil {
+	username := q.Get("user")
+	if err := p.Acexy.StartStream(stream, w, username); err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
