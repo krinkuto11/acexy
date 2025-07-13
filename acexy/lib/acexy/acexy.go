@@ -445,11 +445,16 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 		userSet := make(map[string]struct{})
 		usersByStream := make(map[string][]string)
 
-		for _, s := range a.streams {
+		for streamID, s := range a.streams {
+			if s == nil {
+				slog.Warn("Found nil ongoing stream in GetStatus", "stream_id", streamID)
+				continue
+			}
+
+			idStr := streamID.String() // ✅ this is valid
 			for _, user := range s.users {
 				if user != "" {
 					userSet[user] = struct{}{}
-					idStr := id.String() // AceID has a String() method
 					usersByStream[idStr] = append(usersByStream[idStr], user)
 				}
 			}
