@@ -52,6 +52,7 @@ type AcexyStatus struct {
 	ID      *AceID `json:"stream_id,omitempty"`
 	StatURL string `json:"stat_url,omitempty"`
 	Users   []string `json:"users,omitempty"`
+	UsersByStream   map[string][]string `json:"users_by_stream,omitempty"`
 }
 
 // The stream information is stored in a structure referencing the `AceStreamResponse`
@@ -442,10 +443,14 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 
 		// NEW: collect all users from all streams
 		userSet := make(map[string]struct{})
+		usersByStream := make(map[string][]string)
+
 		for _, s := range a.streams {
 			for _, user := range s.users {
 				if user != "" {
 					userSet[user] = struct{}{}
+					idStr := id.String() // AceID has a String() method
+					usersByStream[idStr] = append(usersByStream[idStr], user)
 				}
 			}
 		}
@@ -456,7 +461,8 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 
 		return AcexyStatus{
 			Streams: &streams,
-			Users:   users, // ✅ added
+			Users:   users,
+			UsersByStream: usersByStream,
 		}, nil
 	}
 
