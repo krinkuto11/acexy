@@ -51,6 +51,7 @@ type AcexyStatus struct {
 	Streams *uint  `json:"streams,omitempty"`
 	ID      *AceID `json:"stream_id,omitempty"`
 	StatURL string `json:"stat_url,omitempty"`
+	Users   []string `json:"users,omitempty"`
 }
 
 // The stream information is stored in a structure referencing the `AceStreamResponse`
@@ -69,6 +70,7 @@ type ongoingStream struct {
 	stream  *AceStream
 	copier  *Copier
 	writers *pmw.PMultiWriter
+	users   map[io.Writer]string
 }
 
 // Structure referencing the AceStream Proxy - this is, ourselves
@@ -152,6 +154,7 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 		player:  nil,
 		stream:  stream,
 		writers: pmw.New(),
+		users:   make(map[io.Writer]string),
 	}
 	slog.Info("Started new stream", "id", aceId, "clients", a.streams[aceId].clients)
 	return stream, nil
@@ -173,6 +176,10 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 
 	// Register the new client
 	ongoingStream.clients++
+
+	//Register the stream user
+	username := extraParams.Get("user")
+	ongoingStream.users[out] = username
 
 	// Check if the stream is already being played
 	if ongoingStream.player != nil {
@@ -284,6 +291,9 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 	} else {
 		slog.Warn("Stream has no clients", "stream", stream.ID)
 	}
+
+	// Delete the user entry
+	delete(ongoingStream.users, out)
 
 	// Check if we have to stop the stream
 	if ongoingStream.clients == 0 {
@@ -427,10 +437,15 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 
 	// Check if the stream is already enqueued
 	if stream, ok := a.streams[*id]; ok {
+		users := make([]string, 0, len(stream.users))
+		for _, user := range stream.users {
+			users = append(users, user)
+		}
 		return AcexyStatus{
 			Clients: &stream.clients,
 			ID:      id,
 			StatURL: stream.stream.StatURL,
+			Users:   users,
 		}, nil
 	}
 
