@@ -18,7 +18,6 @@ FROM alpine:3.18 AS final-stage
 COPY --from=build-stage /acexy         /acexy
 EXPOSE 8080
 ENV ACEXY_LISTEN_ADDR=":8080"
-ENV ACEXY_LOG_LEVEL=debug
 # USER acestream:acestream
 
 # Install curl for healthcheck
