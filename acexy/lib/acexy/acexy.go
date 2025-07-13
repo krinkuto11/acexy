@@ -439,7 +439,25 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 	// Return the global status if no ID is given
 	if id == nil {
 		streams := uint(len(a.streams))
-		return AcexyStatus{Streams: &streams}, nil
+
+		// NEW: collect all users from all streams
+		userSet := make(map[string]struct{})
+		for _, s := range a.streams {
+			for _, user := range s.users {
+				if user != "" {
+					userSet[user] = struct{}{}
+				}
+			}
+		}
+		users := make([]string, 0, len(userSet))
+		for user := range userSet {
+			users = append(users, user)
+		}
+
+		return AcexyStatus{
+			Streams: &streams,
+			Users:   users, // ✅ added
+		}, nil
 	}
 
 	// Check if the stream is already enqueued
