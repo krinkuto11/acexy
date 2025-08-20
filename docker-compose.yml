@@ -1,6 +1,7 @@
 services:
   acexy:
     image: ghcr.io/javinator9889/acexy:0.2.0
+    restart: unless-stopped
     ports:
       - 8080:8080/tcp
     environment:
@@ -20,6 +21,7 @@ services:
 
   acestream:
     image: martinbjeldbak/acestream-http-proxy:latest  # or whatever image you want to use
+    restart: unless-stopped
     # you can expose here the ports if you want to access the acestream service directly
     # ports:
     #   - "6878:6878"
