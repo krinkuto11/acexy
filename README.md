@@ -53,20 +53,32 @@ When using `acexy`, you automatically have:
   same time in multiple clients*.
 * **Resilient, error-proof** streaming thanks to the HTTP Middleware 🛡.
 * *Blazing fast, minimal proxy* ☄ written in Go!
+* **Orchestrator Integration** 🎛: Dynamic engine management and load balancing
 
 With this proxy, the following architecture is now possible:
 
 ![acexy Topology](doc/img/acexy.svg)
+
+### New with Orchestrator Integration 🆕
+
+With the built-in orchestrator integration, acexy now supports:
+
+* **Dynamic Engine Pools**: Automatically manages multiple acestream engines
+* **Intelligent Load Balancing**: One stream per engine with automatic provisioning  
+* **High Availability**: Automatic failover and engine replacement
+* **Zero Manual Configuration**: Engines are provisioned on-demand
 
 ## Usage 📐
 
 `acexy` is available and published as a Docker image. Make sure you have
 the latest [Docker](https://docker.com) image installed and available.
 
-The Acexy container will connect against an AceStream server. You need to
-deploy either a Docker image, and link Acexy within the same network; Or
-have a running AceStream version on your host and run Acexy in host-networked
-mode.
+**Recommended Setup (with Orchestrator)**: The acexy container will work with 
+the orchestrator to automatically manage acestream engines. This is the recommended
+approach for production deployments as it provides load balancing and high availability.
+
+**Legacy Setup**: The acexy container can also connect directly to a single AceStream 
+server for backwards compatibility.
 
 > **INFO**: There is a `docker-compose.yml` file in the repo you can directly
 > use to launch the whole block. This is **the recommended setup starting
@@ -153,6 +165,53 @@ docker run -t --network host ghcr.io/javinator9889/acexy
 
 That should enable AceStream to use UPnP freely.
 
+## Orchestrator Integration 🎛
+
+Starting from version `v0.3.0`, acexy includes built-in integration with the acestream-orchestrator for automatic load balancing and engine management. This provides several key benefits:
+
+### Key Features 🔗
+
+* **Dynamic Engine Selection** 🎯: Automatically selects the best available engine for each stream
+* **Single Stream Per Engine** 🚫: Enforces load balancing with one stream per engine constraint  
+* **Auto-Provisioning** 🏭: Automatically provisions new engines when needed
+* **High Availability** 🛡: Graceful fallback to configured engine if orchestrator is unavailable
+* **Zero Configuration** ⚡: Works out-of-the-box with docker-compose setup
+
+### How It Works 🛠
+
+1. **Stream Request**: Client requests a stream from acexy
+2. **Engine Selection**: acexy queries orchestrator for available engines
+3. **Load Balancing**: Selects engine with no active streams (single stream per engine)
+4. **Auto-Provision**: If no engines available, provisions a new acestream container
+5. **Stream Serving**: Serves stream from selected/provisioned engine
+6. **Event Tracking**: Reports stream events back to orchestrator for monitoring
+
+### Setup 📐
+
+The recommended way to use acexy with orchestrator integration is via the provided `docker-compose.yml`:
+
+```shell
+wget https://raw.githubusercontent.com/Javinator9889/acexy/refs/heads/main/docker-compose.yml
+docker compose up -d
+```
+
+This will start:
+- **acexy** on port 8080 with orchestrator integration enabled
+- **orchestrator** on port 8000 for managing acestream engines
+- Automatic acestream engine provisioning as needed
+
+### Configuration ⚙
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `ACEXY_ORCH_URL` | Base URL for orchestrator API | _(empty - disabled)_ |
+| `ACEXY_ORCH_APIKEY` | API key for orchestrator authentication | _(empty)_ |
+| `ACEXY_CONTAINER_ID` | Container ID for orchestrator identification | _(auto-detected)_ |
+
+### Fallback Mode 🔄
+
+If orchestrator integration is not configured or the orchestrator is unavailable, acexy will automatically fall back to the traditional single-engine mode using the configured `ACEXY_HOST` and `ACEXY_PORT`.
+
 ## Configuration Options ⚙
 
 Acexy has tons of configuration options that allow you to customize the behavior. All of them have
@@ -206,8 +265,8 @@ adjustable by using environment variables.
       <th><code>-acestream-host</code></th>
       <th><code>ACEXY_HOST</code></th>
       <th>
-        Where the AceStream middleware is located. Change it if you need Acexy to connect to a
-        different AceStream Engine.
+        Where the AceStream middleware is located. Used as fallback when orchestrator integration 
+        is not configured or unavailable.
       </th>
       <th><code>localhost</code></th>
     <tr>
@@ -215,8 +274,8 @@ adjustable by using environment variables.
       <th><code>-acestream-port</code></th>
       <th><code>ACEXY_PORT</code></th>
       <th>
-        The port to connect to the AceStream middleware. Change it if you need Acexy to connect
-        to a different AceStream Engine.
+        The port to connect to the AceStream middleware. Used as fallback when orchestrator 
+        integration is not configured or unavailable.
       </th>
       <th><code>6878</code></th>
     <tr>
@@ -263,6 +322,33 @@ adjustable by using environment variables.
         (ie: You have very big latencies).
       </th>
       <th><code>1s</code></th>
+    <tr>
+    <tr>
+      <th>-</th>
+      <th><code>ACEXY_ORCH_URL</code></th>
+      <th>
+        Base URL for the orchestrator API. When set, enables orchestrator integration for 
+        dynamic engine selection and load balancing. Leave empty to disable orchestrator integration.
+      </th>
+      <th><i>empty</i></th>
+    <tr>
+    <tr>
+      <th>-</th>
+      <th><code>ACEXY_ORCH_APIKEY</code></th>
+      <th>
+        API key for orchestrator authentication. Required if the orchestrator has API key 
+        authentication enabled.
+      </th>
+      <th><i>empty</i></th>
+    <tr>
+    <tr>
+      <th>-</th>
+      <th><code>ACEXY_CONTAINER_ID</code></th>
+      <th>
+        Container ID for orchestrator identification. Usually auto-detected when running in Docker.
+        Used for event reporting and engine identification.
+      </th>
+      <th><i>auto-detected</i></th>
     <tr>
   </tbody>
 </table>
