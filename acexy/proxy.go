@@ -92,7 +92,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
-		
+
 		// Emit error event to orchestrator even if FetchStream fails
 		if p.Orch != nil {
 			_, key := aceId.ID()
@@ -101,7 +101,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			slog.Debug("Emitting error event for failed stream fetch", "stream_id", failedStreamID)
 			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
 		}
-		
+
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -113,18 +113,18 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		key        string
 		playbackID string
 	}
-	
+
 	if p.Orch != nil && stream != nil {
 		orchEventData.idType, orchEventData.key = aceId.ID()
 		orchEventData.playbackID = playbackIDFromStat(stream.StatURL)
 		// Generate consistent stream ID: key|playback_session_id format expected by orchestrator
 		orchEventData.streamID = orchEventData.key + "|" + orchEventData.playbackID
-		
+
 		// Emit stream started event early for orchestrator tracking
 		orchKeyType := mapAceIDTypeToOrchestrator(orchEventData.idType)
-		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, orchKeyType, orchEventData.key, 
+		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, orchKeyType, orchEventData.key,
 			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID)
-		
+
 		// Ensure stream ended event is always emitted, even on errors
 		defer func() {
 			if r := recover(); r != nil {
@@ -364,23 +364,23 @@ func playbackIDFromStat(statURL string) string {
 	if statURL == "" {
 		return ""
 	}
-	
+
 	u, err := url.Parse(statURL)
 	if err != nil {
 		return ""
 	}
-	
+
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	// Expect at least 3 parts: ['ace', 'stat', 'infohash', 'playback_session_id']
 	// But the path structure could be: .../ace/stat/<infohash>/<playback_session_id>
 	if len(parts) >= 4 && parts[len(parts)-3] == "stat" {
 		return parts[len(parts)-1]
 	}
-	
+
 	// Fallback: if path structure is different but has at least one part, return the last one
 	if len(parts) >= 1 {
 		return parts[len(parts)-1]
 	}
-	
+
 	return ""
 }
