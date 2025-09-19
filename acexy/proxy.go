@@ -92,8 +92,47 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		
+		// Emit error event to orchestrator even if FetchStream fails
+		if p.Orch != nil {
+			_, key := aceId.ID()
+			// Generate stream ID for failed stream
+			failedStreamID := key + "|fetch_failed"
+			slog.Debug("Emitting error event for failed stream fetch", "stream_id", failedStreamID)
+			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
+		}
+		
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Prepare orchestrator event data early
+	var orchEventData struct {
+		streamID   string
+		idType     acexy.AceIDType
+		key        string
+		playbackID string
+	}
+	
+	if p.Orch != nil && stream != nil {
+		orchEventData.idType, orchEventData.key = aceId.ID()
+		orchEventData.playbackID = playbackIDFromStat(stream.StatURL)
+		// Generate consistent stream ID: key|playback_session_id format expected by orchestrator
+		orchEventData.streamID = orchEventData.key + "|" + orchEventData.playbackID
+		
+		// Emit stream started event early for orchestrator tracking
+		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, string(orchEventData.idType), orchEventData.key, 
+			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID)
+		
+		// Ensure stream ended event is always emitted, even on errors
+		defer func() {
+			if r := recover(); r != nil {
+				p.Orch.EmitEnded(orchEventData.streamID, "panic")
+				panic(r) // Re-panic after logging
+			} else {
+				p.Orch.EmitEnded(orchEventData.streamID, "handler_exit")
+			}
+		}()
 	}
 
 	// Set response headers first, before starting the stream or writing status
@@ -125,17 +164,12 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	if err := p.Acexy.StartStream(stream, w); err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		// Emit error event to orchestrator before returning
+		if p.Orch != nil && orchEventData.streamID != "" {
+			p.Orch.EmitEnded(orchEventData.streamID, "start_stream_failed")
+		}
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-
-	// Emit event to orchestrator only after stream starts successfully
-	if p.Orch != nil && stream != nil {
-		idType, key := aceId.ID()
-		playbackID := playbackIDFromStat(stream.StatURL)
-		streamID := key
-		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, string(idType), key, playbackID, stream.StatURL, stream.CommandURL, streamID)
-		defer p.Orch.EmitEnded(streamID, "handler_exit")
 	}
 
 	// Now that we know the stream started successfully, write the status
