@@ -96,34 +96,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Emit event to orchestrator
-	if p.Orch != nil && stream != nil {
-		idType, key := aceId.ID()
-		playbackID := playbackIDFromStat(stream.StatURL)
-		streamID := key
-		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, string(idType), key, playbackID, stream.StatURL, stream.CommandURL, streamID)
-		defer p.Orch.EmitEnded(streamID, "handler_exit")
-	}
-
-	// And start playing the stream. The `StartStream` will dump the contents of the new or
-	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
-	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
-	// pass it directly.
-	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
-	if err := p.Acexy.StartStream(stream, w); err != nil {
-		slog.Error("Failed to start stream", "stream", aceId, "error", err)
-		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Since we're using a proxy, we tell the client that we are using chunked encoding
-	// and the content type is MPEGTS. For HLS (M3U8) we respond with the MIME type of
-	// the M3U8 list but the client will connect to another endpoints ("ace/c/....ts") for
-	// the playback.
-	w.WriteHeader(http.StatusOK)
-
-	// Defer the stream finish. This will be called when the request is done. When in M3U8 mode,
-	// the client connects directly to a subset of endpoints, so we are blind to what the client
+	// Set response headers first, before starting the stream or writing status
+	// When in M3U8 mode, the client connects directly to a subset of endpoints, so we are blind to what the client
 	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
 	// simulating a new connection. Therefore, we can accumulate a lot of open streams and let
 	// the timeout finish them.
@@ -143,6 +117,29 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Transfer-Encoding", "chunked")
 		defer p.Acexy.StopStream(stream, w)
 	}
+
+	// And start playing the stream. The `StartStream` will dump the contents of the new or
+	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
+	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
+	// pass it directly.
+	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
+	if err := p.Acexy.StartStream(stream, w); err != nil {
+		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Emit event to orchestrator only after stream starts successfully
+	if p.Orch != nil && stream != nil {
+		idType, key := aceId.ID()
+		playbackID := playbackIDFromStat(stream.StatURL)
+		streamID := key
+		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, string(idType), key, playbackID, stream.StatURL, stream.CommandURL, streamID)
+		defer p.Orch.EmitEnded(streamID, "handler_exit")
+	}
+
+	// Now that we know the stream started successfully, write the status
+	w.WriteHeader(http.StatusOK)
 
 	// And wait for the client to disconnect
 	select {
@@ -216,6 +213,9 @@ func parseArgs() {
 	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
 	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
 	size.Default = 1 << 20
+
+	// Actually parse the command line flags
+	flag.Parse()
 
 	// Env overrides
 	if v := os.Getenv("ACEXY_ADDR"); v != "" {
@@ -303,7 +303,7 @@ func main() {
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
 	mux.Handle(APIv1_URL+"/status", proxy)
-	mux.Handle("/", http.NotFoundHandler())
+	mux.Handle("/", proxy) // Let proxy handle all other requests including root
 
 	// Start the HTTP server
 	slog.Info("Starting server", "addr", addr)
@@ -315,13 +315,26 @@ func main() {
 
 // playbackIDFromStat extracts playback_session_id from .../ace/stat/<infohash>/<playback_session_id>
 func playbackIDFromStat(statURL string) string {
+	if statURL == "" {
+		return ""
+	}
+	
 	u, err := url.Parse(statURL)
 	if err != nil {
 		return ""
 	}
+	
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	// Expect at least 3 parts: ['ace', 'stat', 'infohash', 'playback_session_id']
+	// But the path structure could be: .../ace/stat/<infohash>/<playback_session_id>
+	if len(parts) >= 4 && parts[len(parts)-3] == "stat" {
+		return parts[len(parts)-1]
+	}
+	
+	// Fallback: if path structure is different but has at least one part, return the last one
 	if len(parts) >= 1 {
 		return parts[len(parts)-1]
 	}
+	
 	return ""
 }
