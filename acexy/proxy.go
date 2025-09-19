@@ -88,6 +88,40 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Select the best available engine from orchestrator if configured
+	var selectedHost string
+	var selectedPort int
+	
+	if p.Orch != nil {
+		// Try to get an available engine from orchestrator
+		host, port, err := p.Orch.SelectBestEngine()
+		if err != nil {
+			slog.Warn("Failed to select engine from orchestrator, falling back to configured engine", "error", err)
+			selectedHost = p.Acexy.Host
+			selectedPort = p.Acexy.Port
+		} else {
+			selectedHost = host
+			selectedPort = port
+			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
+		}
+	} else {
+		// No orchestrator configured, use the default configured engine
+		selectedHost = p.Acexy.Host
+		selectedPort = p.Acexy.Port
+	}
+
+	// Temporarily update acexy configuration for this request
+	originalHost := p.Acexy.Host
+	originalPort := p.Acexy.Port
+	p.Acexy.Host = selectedHost
+	p.Acexy.Port = selectedPort
+
+	// Restore original configuration after stream handling
+	defer func() {
+		p.Acexy.Host = originalHost
+		p.Acexy.Port = originalPort
+	}()
+
 	// Gather the stream information
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
@@ -121,8 +155,9 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		orchEventData.streamID = orchEventData.key + "|" + orchEventData.playbackID
 
 		// Emit stream started event early for orchestrator tracking
+		// Use the selected engine host/port instead of the original acexy configuration
 		orchKeyType := mapAceIDTypeToOrchestrator(orchEventData.idType)
-		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, orchKeyType, orchEventData.key,
+		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, orchEventData.key,
 			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID)
 
 		// Ensure stream ended event is always emitted, even on errors
@@ -240,8 +275,8 @@ func parseArgs() {
 	// Parse the command-line arguments
 	flag.StringVar(&addr, "addr", "127.0.0.1:6878", "Server address")
 	flag.StringVar(&scheme, "scheme", "http", "AceStream scheme")
-	flag.StringVar(&host, "host", "127.0.0.1", "AceStream host")
-	flag.IntVar(&port, "port", 6878, "AceStream port")
+	flag.StringVar(&host, "host", "127.0.0.1", "AceStream host (fallback when orchestrator not configured)")
+	flag.IntVar(&port, "port", 6878, "AceStream port (fallback when orchestrator not configured)")
 	flag.DurationVar(&streamTimeout, "timeout", 60*time.Second, "Stream timeout (M3U8 mode)")
 	flag.BoolVar(&m3u8, "m3u8", false, "M3U8 mode")
 	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
@@ -320,6 +355,17 @@ func main() {
 	} else {
 		endpoint = acexy.MPEG_TS_ENDPOINT
 	}
+	
+	// Create orchestrator client
+	orchURL := os.Getenv("ACEXY_ORCH_URL")
+	var orchClient *orchClient
+	if orchURL != "" {
+		orchClient = newOrchClient(orchURL)
+		slog.Info("Orchestrator integration enabled", "url", orchURL)
+	} else {
+		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
+	}
+	
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
 		Scheme:            scheme,
@@ -333,7 +379,7 @@ func main() {
 	acexy.Init()
 
 	// Create a new HTTP server
-	proxy := &Proxy{Acexy: acexy, Orch: newOrchClient(os.Getenv("ACEXY_ORCH_URL"))}
+	proxy := &Proxy{Acexy: acexy, Orch: orchClient}
 	mux := http.NewServeMux()
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
