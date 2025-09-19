@@ -14,6 +14,10 @@ services:
       ACEXY_EMPTY_TIMEOUT: "60s"  # Timeout to close the connection if no data is received
       ACEXY_BUFFER_SIZE: 4MB      # Buffer size is 4MB
       ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
+      # Orchestrator integration (optional)
+      # ACEXY_ORCH_BASE_URL: ""     # Base URL for orchestrator API (leave empty to disable orchestrator integration)
+      # ACEXY_ORCH_APIKEY: ""       # API key for orchestrator authentication (optional)
+      # ACEXY_CONTAINER_ID: ""      # Container ID for orchestrator identification (auto-detected if empty)
     links:
       - acestream
     depends_on:
