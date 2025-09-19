@@ -121,7 +121,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		orchEventData.streamID = orchEventData.key + "|" + orchEventData.playbackID
 		
 		// Emit stream started event early for orchestrator tracking
-		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, string(orchEventData.idType), orchEventData.key, 
+		orchKeyType := mapAceIDTypeToOrchestrator(orchEventData.idType)
+		p.Orch.EmitStarted(p.Acexy.Host, p.Acexy.Port, orchKeyType, orchEventData.key, 
 			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID)
 		
 		// Ensure stream ended event is always emitted, even on errors
@@ -347,7 +348,18 @@ func main() {
 	}
 }
 
-// playbackIDFromStat extracts playback_session_id from .../ace/stat/<infohash>/<playback_session_id>
+// mapAceIDTypeToOrchestrator maps acexy ID types to orchestrator expected types
+func mapAceIDTypeToOrchestrator(aceType acexy.AceIDType) string {
+	switch aceType {
+	case "infohash":
+		return "infohash"
+	case "id":
+		// In AceStream context, "id" typically refers to content_id
+		return "content_id"
+	default:
+		return "content_id" // default fallback
+	}
+}
 func playbackIDFromStat(statURL string) string {
 	if statURL == "" {
 		return ""
