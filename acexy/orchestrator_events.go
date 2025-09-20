@@ -320,7 +320,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 			if engine.ContainerName != "" {
 				host = engine.ContainerName
 				// Try to get container port from labels for direct container access
-				if containerPortStr, exists := engine.Labels["acestream.http_port"]; exists {
+				if containerPortStr, exists := engine.Labels["host.http_port"]; exists {
 					if containerPort, err := strconv.Atoi(containerPortStr); err == nil {
 						port = containerPort
 					}
