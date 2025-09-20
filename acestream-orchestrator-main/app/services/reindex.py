@@ -20,6 +20,13 @@ def reindex_existing():
             host = "127.0.0.1"
             port = int(lbl.get(HOST_LABEL_HTTP) or 0)
             
+            # Extract container name from Docker
+            container_name = None
+            try:
+                container_name = c.attrs.get("Name", "").lstrip("/")
+            except Exception:
+                pass
+            
             # If port is 0 (missing or empty label), try to extract from Docker port mappings
             if port == 0:
                 try:
@@ -39,4 +46,4 @@ def reindex_existing():
                     pass
             
             now = state.now()
-            state.engines[key] = EngineState(container_id=key, host=host, port=port, labels=lbl, first_seen=now, last_seen=now, streams=[])
+            state.engines[key] = EngineState(container_id=key, container_name=container_name, host=host, port=port, labels=lbl, first_seen=now, last_seen=now, streams=[])

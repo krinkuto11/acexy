@@ -22,7 +22,7 @@ class State:
             key = evt.container_id or f"{evt.engine.host}:{evt.engine.port}"
             eng = self.engines.get(key)
             if not eng:
-                eng = EngineState(container_id=key, host=evt.engine.host, port=evt.engine.port,
+                eng = EngineState(container_id=key, container_name=None, host=evt.engine.host, port=evt.engine.port,
                                   labels=evt.labels or {}, first_seen=self.now(), last_seen=self.now(), streams=[])
                 self.engines[key] = eng
             else:
@@ -38,8 +38,8 @@ class State:
             if stream_id not in eng.streams: eng.streams.append(stream_id)
 
         with SessionLocal() as s:
-            s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, host=eng.host, port=eng.port,
-                              labels=eng.labels, first_seen=eng.first_seen, last_seen=eng.last_seen))
+            s.merge(EngineRow(engine_key=eng.container_id, container_id=evt.container_id, container_name=eng.container_name, 
+                              host=eng.host, port=eng.port, labels=eng.labels, first_seen=eng.first_seen, last_seen=eng.last_seen))
             s.merge(StreamRow(id=stream_id, engine_key=eng.container_id, key_type=st.key_type, key=st.key,
                               playback_session_id=st.playback_session_id, stat_url=st.stat_url, command_url=st.command_url,
                               is_live=st.is_live, started_at=st.started_at, status=st.status))
@@ -105,7 +105,7 @@ class State:
                 # Ensure datetime objects are timezone-aware when loaded from database
                 first_seen = e.first_seen.replace(tzinfo=timezone.utc) if e.first_seen.tzinfo is None else e.first_seen
                 last_seen = e.last_seen.replace(tzinfo=timezone.utc) if e.last_seen.tzinfo is None else e.last_seen
-                self.engines[e.engine_key] = EngineState(container_id=e.engine_key, host=e.host, port=e.port,
+                self.engines[e.engine_key] = EngineState(container_id=e.engine_key, container_name=e.container_name, host=e.host, port=e.port,
                                                          labels=e.labels or {}, first_seen=first_seen, last_seen=last_seen, streams=[])
             for r in s.query(StreamRow).filter(StreamRow.status=="started").all():
                 # Ensure datetime objects are timezone-aware when loaded from database
