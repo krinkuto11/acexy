@@ -29,16 +29,22 @@ class AceProvisionResponse(BaseModel):
     container_http_port: int
     container_https_port: int
 
-def start_container(req: StartRequest) -> str:
+def start_container(req: StartRequest) -> dict:
+    from .naming import generate_container_name
+    
     cli = get_client()
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val}
     image_name = req.image or cfg.TARGET_IMAGE
     
+    # Generate a meaningful container name
+    container_name = generate_container_name(req.name_prefix)
+    
     try:
         cont = safe(cli.containers.run,
             image_name,
             detach=True,
+            name=container_name,
             environment=req.env or None,
             labels=labels,
             network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
@@ -61,7 +67,12 @@ def start_container(req: StartRequest) -> str:
     if cont.status != "running":
         cont.remove(force=True)
         raise RuntimeError(f"Container failed to start within {cfg.STARTUP_TIMEOUT_S}s (status: {cont.status})")
-    return cont.id
+    
+    # Get container name - should match what we set
+    cont.reload()
+    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
+    return {"container_id": cont.id, "container_name": actual_container_name}
 
 def _release_ports_from_labels(labels: dict):
     try:
@@ -89,14 +100,29 @@ def stop_container(container_id: str):
         cont.remove()
 
 def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
+    from .naming import generate_container_name
+    
     host_http = req.host_port or alloc.alloc_host()
     c_http = alloc.alloc_http()
     c_https = alloc.alloc_https(avoid=c_http)
 
-    conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
-    extra_conf = req.env.get("CONF")
-    if extra_conf: conf_lines.append(extra_conf)
-    env = {**req.env, "CONF": "\n".join(conf_lines)}
+    # Use user-provided CONF if available, otherwise use default configuration
+    if "CONF" in req.env:
+        # User explicitly provided CONF (even if empty), use it as-is
+        final_conf = req.env["CONF"]
+    else:
+        # No user CONF, use default orchestrator configuration
+        conf_lines = [f"--http-port={c_http}", f"--https-port={c_https}", "--bind-all"]
+        final_conf = "\n".join(conf_lines)
+    
+    # Set environment variables required by acestream-http-proxy image
+    env = {
+        **req.env, 
+        "CONF": final_conf,
+        "HTTP_PORT": str(c_http),
+        "HTTPS_PORT": str(c_https),
+        "BIND_ALL": "true"
+    }
 
     key, val = cfg.CONTAINER_LABEL.split("=")
     labels = {**req.labels, key: val,
@@ -110,10 +136,14 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         ports[f"{c_https}/tcp"] = host_https
         labels[HOST_LABEL_HTTPS] = str(host_https)
 
+    # Generate a meaningful container name
+    container_name = generate_container_name("acestream")
+
     cli = get_client()
     cont = safe(cli.containers.run,
         req.image or cfg.TARGET_IMAGE,
         detach=True,
+        name=container_name,
         environment=env,
         labels=labels,
         network=cfg.DOCKER_NETWORK if cfg.DOCKER_NETWORK else None,
@@ -127,9 +157,15 @@ def start_acestream(req: AceProvisionRequest) -> AceProvisionResponse:
         _release_ports_from_labels(labels)
         cont.remove(force=True)
         raise RuntimeError("Arranque AceStream fallido")
+
+    
+    # Get container name - should match what we set
+    cont.reload()
+    actual_container_name = cont.attrs.get("Name", "").lstrip("/")
+    
     return AceProvisionResponse(
         container_id=cont.id, 
-        container_name=cont.name,
+        container_name=actual_container_name,
         host_http_port=host_http, 
         container_http_port=c_http, 
         container_https_port=c_https
