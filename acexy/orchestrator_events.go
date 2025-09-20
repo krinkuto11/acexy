@@ -89,6 +89,7 @@ type aceProvisionRequest struct {
 
 type aceProvisionResponse struct {
 	ContainerID         string `json:"container_id"`
+	ContainerName       string `json:"container_name"`
 	HostHTTPPort        int    `json:"host_http_port"`
 	ContainerHTTPPort   int    `json:"container_http_port"`
 	ContainerHTTPSPort  int    `json:"container_https_port"`
@@ -326,8 +327,14 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 	// Wait a moment for the engine to be ready (it should be according to provisioner)
 	time.Sleep(2 * time.Second)
 
-	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "host_port", provResp.HostHTTPPort)
+	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
 	
-	// Return localhost with the host port since the container is mapped to host
+	// Return container name with the container port for direct container access
+	// This avoids localhost resolution issues in Docker networks
+	if provResp.ContainerName != "" {
+		return provResp.ContainerName, provResp.ContainerHTTPPort, nil
+	}
+	
+	// Fallback to localhost with the host port since the container is mapped to host
 	return "localhost", provResp.HostHTTPPort, nil
 }
