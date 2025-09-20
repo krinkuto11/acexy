@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -57,13 +58,14 @@ type endedEvent struct {
 
 // New types for engine selection and orchestrator API
 type engineState struct {
-	ContainerID string            `json:"container_id"`
-	Host        string            `json:"host"`
-	Port        int               `json:"port"`
-	Labels      map[string]string `json:"labels"`
-	FirstSeen   time.Time         `json:"first_seen"`
-	LastSeen    time.Time         `json:"last_seen"`
-	Streams     []string          `json:"streams"`
+	ContainerID   string            `json:"container_id"`
+	ContainerName string            `json:"container_name,omitempty"`
+	Host          string            `json:"host"`
+	Port          int               `json:"port"`
+	Labels        map[string]string `json:"labels"`
+	FirstSeen     time.Time         `json:"first_seen"`
+	LastSeen      time.Time         `json:"last_seen"`
+	Streams       []string          `json:"streams"`
 }
 
 type streamState struct {
@@ -312,8 +314,20 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 
 		// Use engine if it has no active streams (single stream per engine)
 		if activeStreams == 0 {
-			slog.Info("Selected available engine", "container_id", engine.ContainerID, "host", engine.Host, "port", engine.Port)
-			return engine.Host, engine.Port, nil
+			// Prefer container name with container port for direct Docker network access
+			host := engine.Host
+			port := engine.Port
+			if engine.ContainerName != "" {
+				host = engine.ContainerName
+				// Try to get container port from labels for direct container access
+				if containerPortStr, exists := engine.Labels["acestream.http_port"]; exists {
+					if containerPort, err := strconv.Atoi(containerPortStr); err == nil {
+						port = containerPort
+					}
+				}
+			}
+			slog.Info("Selected available engine", "container_id", engine.ContainerID, "container_name", engine.ContainerName, "host", host, "port", port)
+			return host, port, nil
 		}
 	}
 
