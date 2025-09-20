@@ -67,17 +67,17 @@ type engineState struct {
 }
 
 type streamState struct {
-	ID                  string    `json:"id"`
-	KeyType             string    `json:"key_type"`
-	Key                 string    `json:"key"`
-	ContainerID         string    `json:"container_id"`
-	PlaybackSessionID   string    `json:"playback_session_id"`
-	StatURL             string    `json:"stat_url"`
-	CommandURL          string    `json:"command_url"`
-	IsLive              bool      `json:"is_live"`
-	StartedAt           time.Time `json:"started_at"`
-	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	Status              string    `json:"status"`
+	ID                string     `json:"id"`
+	KeyType           string     `json:"key_type"`
+	Key               string     `json:"key"`
+	ContainerID       string     `json:"container_id"`
+	PlaybackSessionID string     `json:"playback_session_id"`
+	StatURL           string     `json:"stat_url"`
+	CommandURL        string     `json:"command_url"`
+	IsLive            bool       `json:"is_live"`
+	StartedAt         time.Time  `json:"started_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	Status            string     `json:"status"`
 }
 
 type aceProvisionRequest struct {
@@ -88,10 +88,10 @@ type aceProvisionRequest struct {
 }
 
 type aceProvisionResponse struct {
-	ContainerID         string `json:"container_id"`
-	HostHTTPPort        int    `json:"host_http_port"`
-	ContainerHTTPPort   int    `json:"container_http_port"`
-	ContainerHTTPSPort  int    `json:"container_https_port"`
+	ContainerID        string `json:"container_id"`
+	HostHTTPPort       int    `json:"host_http_port"`
+	ContainerHTTPPort  int    `json:"container_http_port"`
+	ContainerHTTPSPort int    `json:"container_https_port"`
 }
 
 func (c *orchClient) post(path string, body any) {
@@ -327,7 +327,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 	time.Sleep(2 * time.Second)
 
 	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "host_port", provResp.HostHTTPPort)
-	
+
 	// Return localhost with the host port since the container is mapped to host
 	return "localhost", provResp.HostHTTPPort, nil
 }

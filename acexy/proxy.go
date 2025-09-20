@@ -91,7 +91,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Select the best available engine from orchestrator if configured
 	var selectedHost string
 	var selectedPort int
-	
+
 	if p.Orch != nil {
 		// Try to get an available engine from orchestrator
 		host, port, err := p.Orch.SelectBestEngine()
@@ -355,7 +355,7 @@ func main() {
 	} else {
 		endpoint = acexy.MPEG_TS_ENDPOINT
 	}
-	
+
 	// Create orchestrator client
 	orchURL := os.Getenv("ACEXY_ORCH_URL")
 	var orchClient *orchClient
@@ -365,7 +365,7 @@ func main() {
 	} else {
 		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
 	}
-	
+
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
 		Scheme:            scheme,
