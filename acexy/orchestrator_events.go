@@ -339,7 +339,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 	}
 
 	// Wait a moment for the engine to be ready (it should be according to provisioner)
-	time.Sleep(2 * time.Second)
+	time.Sleep(10 * time.Second)
 
 	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
 	
