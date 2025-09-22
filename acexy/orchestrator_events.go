@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -314,16 +313,9 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 
 		// Use engine if it has no active streams (single stream per engine)
 		if activeStreams == 0 {
-			// Prefer container name with container port for direct Docker network access
+			// Use orchestrator-provided host and port directly
 			host := engine.Host
 			port := engine.Port
-		
-			// Try to get container port from labels for direct container access (Extra check)
-			if containerPortStr, exists := engine.Labels["host.http_port"]; exists {
-				if containerPort, err := strconv.Atoi(containerPortStr); err == nil {
-					port = containerPort
-				}
-			}
 		
 			slog.Info("Selected available engine", "container_id", engine.ContainerID, "container_name", engine.ContainerName, "host", host, "port", port)
 			return host, port, nil
@@ -342,12 +334,6 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 
 	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
 	
-	// Return container name with the container port for direct container access
-	// This avoids localhost resolution issues in Docker networks
-	if provResp.ContainerName != "" {
-		return provResp.ContainerName, provResp.ContainerHTTPPort, nil
-	}
-	
-	// Fallback to localhost with the host port since the container is mapped to host
+	// Use orchestrator-provided host port mapping directly
 	return "localhost", provResp.HostHTTPPort, nil
 }
