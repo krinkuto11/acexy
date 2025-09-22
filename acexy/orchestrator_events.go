@@ -317,15 +317,14 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 			// Prefer container name with container port for direct Docker network access
 			host := engine.Host
 			port := engine.Port
-			if engine.ContainerName != "" {
-				host = engine.ContainerName
-				// Try to get container port from labels for direct container access
-				if containerPortStr, exists := engine.Labels["host.http_port"]; exists {
-					if containerPort, err := strconv.Atoi(containerPortStr); err == nil {
-						port = containerPort
-					}
+		
+			// Try to get container port from labels for direct container access (Extra check)
+			if containerPortStr, exists := engine.Labels["host.http_port"]; exists {
+				if containerPort, err := strconv.Atoi(containerPortStr); err == nil {
+					port = containerPort
 				}
 			}
+		
 			slog.Info("Selected available engine", "container_id", engine.ContainerID, "container_name", engine.ContainerName, "host", host, "port", port)
 			return host, port, nil
 		}
