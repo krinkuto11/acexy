@@ -16,6 +16,8 @@ type orchClient struct {
 	hc   *http.Client
 	// opcional si el proxy conoce el contenedor
 	containerID string
+	// Maximum streams per engine
+	maxStreamsPerEngine int
 }
 
 func newOrchClient(base string) *orchClient {
@@ -23,10 +25,18 @@ func newOrchClient(base string) *orchClient {
 		return nil
 	}
 	return &orchClient{
-		base:        base,
-		key:         os.Getenv("ACEXY_ORCH_APIKEY"),
-		containerID: os.Getenv("ACEXY_CONTAINER_ID"),
-		hc:          &http.Client{Timeout: 3 * time.Second},
+		base:                base,
+		key:                 os.Getenv("ACEXY_ORCH_APIKEY"),
+		containerID:         os.Getenv("ACEXY_CONTAINER_ID"),
+		maxStreamsPerEngine: 1, // Default value, will be set from main
+		hc:                  &http.Client{Timeout: 3 * time.Second},
+	}
+}
+
+// SetMaxStreamsPerEngine sets the maximum streams per engine configuration
+func (c *orchClient) SetMaxStreamsPerEngine(max int) {
+	if c != nil && max > 0 {
+		c.maxStreamsPerEngine = max
 	}
 }
 
@@ -280,7 +290,7 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 }
 
 // SelectBestEngine selects the best available engine based on load balancing rules
-// Returns host, port, and error. Implements single stream per engine or provision new one.
+// Returns host, port, and error. Prioritizes empty engines, then uses configurable max streams per engine.
 func (c *orchClient) SelectBestEngine() (string, int, error) {
 	if c == nil {
 		return "", 0, fmt.Errorf("orchestrator client not configured")
@@ -292,9 +302,17 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		return "", 0, fmt.Errorf("failed to get engines: %w", err)
 	}
 
-	slog.Debug("Found engines from orchestrator", "count", len(engines))
+	slog.Debug("Found engines from orchestrator", "count", len(engines), "max_streams_per_engine", c.maxStreamsPerEngine)
 
-	// Find engine with no active streams (single stream per engine constraint)
+	// Collect engines with their stream counts for prioritization
+	type engineWithLoad struct {
+		engine       engineState
+		activeStreams int
+	}
+	
+	var availableEngines []engineWithLoad
+
+	// Check stream count for each engine
 	for _, engine := range engines {
 		streams, err := c.GetEngineStreams(engine.ContainerID)
 		if err != nil {
@@ -309,31 +327,56 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 			}
 		}
 
-		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "host", engine.Host, "port", engine.Port)
+		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "host", engine.Host, "port", engine.Port, "max_allowed", c.maxStreamsPerEngine)
 
-		// Use engine if it has no active streams (single stream per engine)
-		if activeStreams == 0 {
-			// Use orchestrator-provided host and port directly
-			host := engine.Host
-			port := engine.Port
-		
-			slog.Info("Selected available engine", "container_id", engine.ContainerID, "container_name", engine.ContainerName, "host", host, "port", port)
-			return host, port, nil
+		// Only consider engines that have capacity
+		if activeStreams < c.maxStreamsPerEngine {
+			availableEngines = append(availableEngines, engineWithLoad{
+				engine:        engine,
+				activeStreams: activeStreams,
+			})
 		}
 	}
 
-	// No available engines, provision a new one
-	slog.Info("No available engines found, provisioning new acestream engine")
-	provResp, err := c.ProvisionAcestream()
-	if err != nil {
-		return "", 0, fmt.Errorf("failed to provision new engine: %w", err)
+	// If no engines have capacity, provision a new one
+	if len(availableEngines) == 0 {
+		slog.Info("No available engines found (all at capacity), provisioning new acestream engine")
+		provResp, err := c.ProvisionAcestream()
+		if err != nil {
+			return "", 0, fmt.Errorf("failed to provision new engine: %w", err)
+		}
+
+		// Wait a moment for the engine to be ready (it should be according to provisioner)
+		time.Sleep(10 * time.Second)
+
+		slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
+		
+		// Use orchestrator-provided host port mapping directly
+		return "localhost", provResp.HostHTTPPort, nil
 	}
 
-	// Wait a moment for the engine to be ready (it should be according to provisioner)
-	time.Sleep(10 * time.Second)
+	// Sort engines by stream count (ascending) to prioritize empty engines
+	// Engines with 0 active streams will be first, then 1, 2, etc.
+	for i := 0; i < len(availableEngines); i++ {
+		for j := i + 1; j < len(availableEngines); j++ {
+			if availableEngines[i].activeStreams > availableEngines[j].activeStreams {
+				availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+			}
+		}
+	}
 
-	slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
+	// Select the engine with the least active streams (empty engines are prioritized)
+	bestEngine := availableEngines[0]
+	host := bestEngine.engine.Host
+	port := bestEngine.engine.Port
+
+	slog.Info("Selected best available engine", 
+		"container_id", bestEngine.engine.ContainerID, 
+		"container_name", bestEngine.engine.ContainerName, 
+		"host", host, 
+		"port", port, 
+		"active_streams", bestEngine.activeStreams,
+		"max_streams", c.maxStreamsPerEngine)
 	
-	// Use orchestrator-provided host port mapping directly
-	return "localhost", provResp.HostHTTPPort, nil
+	return host, port, nil
 }

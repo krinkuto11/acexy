@@ -31,6 +31,7 @@ var (
 	emptyTimeout      time.Duration
 	size              Size
 	noResponseTimeout time.Duration
+	maxStreamsPerEngine int
 )
 
 //go:embed LICENSE.short
@@ -281,6 +282,7 @@ func parseArgs() {
 	flag.BoolVar(&m3u8, "m3u8", false, "M3U8 mode")
 	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
 	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
+	flag.IntVar(&maxStreamsPerEngine, "maxStreamsPerEngine", 1, "Maximum streams per engine when using orchestrator")
 	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
 	size.Default = 1 << 20
 
@@ -325,6 +327,11 @@ func parseArgs() {
 			size.Bytes = s
 		}
 	}
+	if v := os.Getenv("ACEXY_MAX_STREAMS_PER_ENGINE"); v != "" {
+		if m, err := strconv.Atoi(v); err == nil && m > 0 {
+			maxStreamsPerEngine = m
+		}
+	}
 }
 
 func LookupLogLevel() slog.Level {
@@ -361,7 +368,8 @@ func main() {
 	var orchClient *orchClient
 	if orchURL != "" {
 		orchClient = newOrchClient(orchURL)
-		slog.Info("Orchestrator integration enabled", "url", orchURL)
+		orchClient.SetMaxStreamsPerEngine(maxStreamsPerEngine)
+		slog.Info("Orchestrator integration enabled", "url", orchURL, "max_streams_per_engine", maxStreamsPerEngine)
 	} else {
 		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
 	}
