@@ -172,7 +172,7 @@ Starting from version `v0.3.0`, acexy includes built-in integration with the ace
 ### Key Features 🔗
 
 * **Dynamic Engine Selection** 🎯: Automatically selects the best available engine for each stream
-* **Single Stream Per Engine** 🚫: Enforces load balancing with one stream per engine constraint  
+* **Configurable Load Balancing** ⚖️: Configurable maximum streams per engine with empty engine prioritization  
 * **Auto-Provisioning** 🏭: Automatically provisions new engines when needed
 * **High Availability** 🛡: Graceful fallback to configured engine if orchestrator is unavailable
 * **Zero Configuration** ⚡: Works out-of-the-box with docker-compose setup
@@ -181,8 +181,8 @@ Starting from version `v0.3.0`, acexy includes built-in integration with the ace
 
 1. **Stream Request**: Client requests a stream from acexy
 2. **Engine Selection**: acexy queries orchestrator for available engines
-3. **Load Balancing**: Selects engine with no active streams (single stream per engine)
-4. **Auto-Provision**: If no engines available, provisions a new acestream container
+3. **Load Balancing**: Prioritizes empty engines, then engines with fewest streams within configured maximum
+4. **Auto-Provision**: If no engines have capacity, provisions a new acestream container
 5. **Stream Serving**: Serves stream from selected/provisioned engine
 6. **Event Tracking**: Reports stream events back to orchestrator for monitoring
 
@@ -207,6 +207,7 @@ This will start:
 | `ACEXY_ORCH_URL` | Base URL for orchestrator API | _(empty - disabled)_ |
 | `ACEXY_ORCH_APIKEY` | API key for orchestrator authentication | _(empty)_ |
 | `ACEXY_CONTAINER_ID` | Container ID for orchestrator identification | _(auto-detected)_ |
+| `ACEXY_MAX_STREAMS_PER_ENGINE` | Maximum streams allowed per engine when using orchestrator | `1` |
 
 ### Fallback Mode 🔄
 

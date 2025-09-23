@@ -50,26 +50,44 @@ When orchestrator integration is disabled or fails, acexy falls back to:
 
 ## Load Balancing Algorithm
 
-The load balancing implements a "single stream per engine" strategy:
+The load balancing implements a configurable streams per engine strategy with empty engine prioritization:
 
 1. **Query all engines** from orchestrator
 2. **Check stream count** for each engine  
-3. **Select first engine** with 0 active streams
-4. **Provision new engine** if all engines are busy
-5. **Report events** to orchestrator for tracking
+3. **Filter engines** with capacity (active streams < max allowed)
+4. **Prioritize empty engines** by sorting engines by stream count (ascending)
+5. **Select best engine** with lowest stream count
+6. **Provision new engine** if all engines are at capacity
+7. **Report events** to orchestrator for tracking
 
 ### Engine Selection Logic
 
 ```go
+// Filter engines that have capacity
+var availableEngines []engineWithLoad
 for _, engine := range engines {
-    activeStreams := countActiveStreams(engine)
-    if activeStreams == 0 {
-        return engine  // Use this engine
+    if engine.activeStreams < maxStreamsPerEngine {
+        availableEngines = append(availableEngines, engine)
     }
 }
+
+// Sort by stream count (ascending) to prioritize empty engines
+sort.Slice(availableEngines, func(i, j int) bool {
+    return availableEngines[i].activeStreams < availableEngines[j].activeStreams
+})
+
+// Select engine with lowest stream count
+if len(availableEngines) > 0 {
+    return availableEngines[0]  // Empty engines first, then least loaded
+}
+
 // No available engines, provision new one
 return provisionNewEngine()
 ```
+
+### Configuration
+
+The maximum streams per engine is configurable via the `ACEXY_MAX_STREAMS_PER_ENGINE` environment variable (default: 1).
 
 ## API Integration
 
