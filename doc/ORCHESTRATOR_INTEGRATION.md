@@ -55,8 +55,8 @@ The load balancing implements a configurable streams per engine strategy with em
 1. **Query all engines** from orchestrator
 2. **Check stream count** for each engine  
 3. **Filter engines** with capacity (active streams < max allowed)
-4. **Prioritize empty engines** by sorting engines by stream count (ascending)
-5. **Select best engine** with lowest stream count
+4. **Prioritize empty engines** by sorting engines by stream count (ascending), then by last usage time (ascending)
+5. **Select best engine** with lowest stream count, preferring engines unused the longest
 6. **Provision new engine** if all engines are at capacity
 7. **Report events** to orchestrator for tracking
 
@@ -71,19 +71,41 @@ for _, engine := range engines {
     }
 }
 
-// Sort by stream count (ascending) to prioritize empty engines
+// Sort by stream count (ascending) to prioritize empty engines,
+// then by last seen time (ascending) to prioritize engines unused the longest
 sort.Slice(availableEngines, func(i, j int) bool {
-    return availableEngines[i].activeStreams < availableEngines[j].activeStreams
+    iEngine := availableEngines[i]
+    jEngine := availableEngines[j]
+    
+    // Primary sort: by active stream count (ascending)
+    if iEngine.activeStreams != jEngine.activeStreams {
+        return iEngine.activeStreams < jEngine.activeStreams
+    }
+    
+    // Secondary sort: by last seen timestamp (ascending - oldest first)
+    return iEngine.engine.LastSeen.Before(jEngine.engine.LastSeen)
 })
 
-// Select engine with lowest stream count
+// Select engine with lowest stream count, preferring engines unused the longest
 if len(availableEngines) > 0 {
-    return availableEngines[0]  // Empty engines first, then least loaded
+    return availableEngines[0]  // Empty engines first, then least loaded, then oldest usage
 }
 
 // No available engines, provision new one
 return provisionNewEngine()
 ```
+
+### Load Distribution Strategy
+
+The enhanced load balancing algorithm prevents acestream engines from hanging due to excessive stream connects/disconnects by implementing proper load distribution:
+
+1. **Primary Priority**: Empty engines (0 active streams) are always preferred
+2. **Secondary Priority**: Among engines with the same stream count, choose the one that hasn't been used the longest (oldest `LastSeen` timestamp)
+
+This approach ensures:
+- **Even distribution**: Load is spread across all available engines over time
+- **Engine health**: Engines get adequate idle time between heavy usage periods  
+- **Performance**: Avoids overloading recently used engines while others remain idle
 
 ### Configuration
 
