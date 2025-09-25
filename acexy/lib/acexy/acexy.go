@@ -63,12 +63,13 @@ type AceStream struct {
 }
 
 type ongoingStream struct {
-	clients uint
-	done    chan struct{}
-	player  *http.Response
-	stream  *AceStream
-	copier  *Copier
-	writers *pmw.PMultiWriter
+	clients   uint
+	done      chan struct{}
+	player    *http.Response
+	stream    *AceStream
+	copier    *Copier
+	writers   *pmw.PMultiWriter
+	createdAt time.Time // Track when the stream was created
 }
 
 // Structure referencing the AceStream Proxy - this is, ourselves
@@ -112,6 +113,37 @@ func (a *Acexy) Init() {
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
+	
+	// Start a background goroutine to clean up stale streams
+	go a.cleanupStaleStreams()
+}
+
+// cleanupStaleStreams runs in the background to clean up streams that may have gotten stuck
+func (a *Acexy) cleanupStaleStreams() {
+	ticker := time.NewTicker(5 * time.Minute) // Check every 5 minutes
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		a.mutex.Lock()
+		staleCutoff := time.Now().Add(-30 * time.Minute) // Consider streams older than 30 minutes as potentially stale
+		
+		for aceId, stream := range a.streams {
+			// Clean up streams that have no clients and no active player for more than 30 minutes
+			if stream.clients == 0 && stream.player == nil && stream.createdAt.Before(staleCutoff) {
+				slog.Warn("Cleaning up stale stream", "stream", aceId, "created_at", stream.createdAt)
+				delete(a.streams, aceId)
+				
+				// Close the done channel if not already closed
+				select {
+				case <-stream.done:
+					// Already closed
+				default:
+					close(stream.done)
+				}
+			}
+		}
+		a.mutex.Unlock()
+	}
 }
 
 // Starts a new stream. The stream is enqueued in the AceStream backend, returning a playback
@@ -126,14 +158,37 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 
 	// Check if the stream is already enqueued
 	if stream, ok := a.streams[aceId]; ok {
-		slog.Info("Reusing existing", "stream", aceId, "clients", stream.clients)
-		return stream.stream, nil
+		// Verify that the existing stream is still valid by checking if it has a valid player connection
+		// or if it's in a clean state (no clients and no active player)
+		if stream.player == nil && stream.clients == 0 {
+			// Check if stream is stale (older than 10 minutes with no activity)
+			if time.Since(stream.createdAt) > 10*time.Minute {
+				slog.Debug("Cleaning up stale stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
+				delete(a.streams, aceId)
+				// Close the done channel if not already closed
+				select {
+				case <-stream.done:
+					// Already closed
+				default:
+					close(stream.done)
+				}
+				// Continue to create a new stream
+			} else {
+				slog.Info("Reusing existing idle stream", "stream", aceId, "clients", stream.clients)
+				return stream.stream, nil
+			}
+		} else {
+			slog.Info("Reusing existing active stream", "stream", aceId, "clients", stream.clients)
+			return stream.stream, nil
+		}
 	}
 
 	// Enqueue the middleware
 	middleware, err := GetStream(a, aceId, extraParams)
 	if err != nil {
 		slog.Error("Error getting stream middleware", "error", err)
+		// Ensure we don't leave any partial state in the streams map
+		delete(a.streams, aceId)
 		return nil, err
 	}
 
@@ -147,11 +202,12 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 	}
 
 	a.streams[aceId] = &ongoingStream{
-		clients: 0,
-		done:    make(chan struct{}),
-		player:  nil,
-		stream:  stream,
-		writers: pmw.New(),
+		clients:   0,
+		done:      make(chan struct{}),
+		player:    nil,
+		stream:    stream,
+		writers:   pmw.New(),
+		createdAt: time.Now(),
 	}
 	slog.Info("Started new stream", "id", aceId, "clients", a.streams[aceId].clients)
 	return stream, nil
@@ -182,6 +238,8 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
+		// Remove the writer that was just added since we're failing
+		ongoingStream.writers.Remove(out)
 		ongoingStream.clients--
 		if ongoingStream.clients == 0 {
 			if releaseErr := a.releaseStream(stream); releaseErr != nil {
@@ -236,17 +294,22 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
 	}
 
-	// Remove the stream from the list
+	// Remove the stream from the list first to prevent further access
 	defer delete(a.streams, stream.ID)
 	slog.Debug("Stopping stream", "stream", stream.ID)
-	// Close the stream
+	
+	// Close the stream backend connection (don't fail the cleanup if this fails)
 	if err := CloseStream(stream); err != nil {
-		slog.Debug("Error closing stream", "error", err)
-		return err
+		slog.Debug("Error closing stream backend (continuing cleanup anyway)", "error", err)
+		// Don't return error here - we want to continue cleanup
 	}
+	
+	// Close the player connection if it exists
 	if ongoingStream.player != nil {
 		slog.Debug("Closing player", "stream", stream.ID)
-		ongoingStream.player.Body.Close()
+		if err := ongoingStream.player.Body.Close(); err != nil {
+			slog.Debug("Error closing player body", "error", err)
+		}
 	}
 
 	// Close the `done' channel
