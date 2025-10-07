@@ -128,12 +128,21 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
 
-		// Emit error event to orchestrator even if FetchStream fails
+		// Emit error events to orchestrator even if FetchStream fails
+		// This ensures the orchestrator knows which engine was attempted and failed
 		if p.Orch != nil {
-			_, key := aceId.ID()
-			// Generate stream ID for failed stream
+			idType, key := aceId.ID()
+			// Generate stream ID for failed stream (use a placeholder playback ID)
 			failedStreamID := key + "|fetch_failed"
-			slog.Debug("Emitting error event for failed stream fetch", "stream_id", failedStreamID)
+			orchKeyType := mapAceIDTypeToOrchestrator(idType)
+			
+			// Emit stream_started first so orchestrator tracks the engine usage attempt
+			slog.Debug("Emitting stream_started event for failed fetch", "stream_id", failedStreamID, "host", selectedHost, "port", selectedPort)
+			p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
+				"fetch_failed", "", "", failedStreamID)
+			
+			// Then immediately emit stream_ended with the failure reason
+			slog.Debug("Emitting stream_ended event for failed stream fetch", "stream_id", failedStreamID)
 			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
 		}
 
