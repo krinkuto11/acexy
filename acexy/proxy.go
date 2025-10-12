@@ -97,6 +97,23 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		// Try to get an available engine from orchestrator
 		host, port, err := p.Orch.SelectBestEngine()
 		if err != nil {
+			// Check if it's a provisioning issue and provide specific error messages
+			if strings.Contains(err.Error(), "VPN") {
+				slog.Error("Stream failed due to VPN issue", "error", err)
+				http.Error(w, "Service temporarily unavailable: VPN connection required", http.StatusServiceUnavailable)
+				return
+			}
+			if strings.Contains(err.Error(), "circuit breaker") {
+				slog.Error("Stream failed due to circuit breaker", "error", err)
+				http.Error(w, "Service temporarily unavailable: Too many failures, please retry later", http.StatusServiceUnavailable)
+				return
+			}
+			if strings.Contains(err.Error(), "cannot provision") {
+				slog.Error("Stream failed - provisioning blocked", "error", err)
+				http.Error(w, fmt.Sprintf("Service temporarily unavailable: %s", err.Error()), http.StatusServiceUnavailable)
+				return
+			}
+			
 			slog.Warn("Failed to select engine from orchestrator, falling back to configured engine", "error", err)
 			selectedHost = p.Acexy.Host
 			selectedPort = p.Acexy.Port
