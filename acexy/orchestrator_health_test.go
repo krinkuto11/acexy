@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -192,5 +193,46 @@ func TestProvisionWithRetryPermanentFailure(t *testing.T) {
 	}
 	if attemptCount != 1 {
 		t.Errorf("Expected 1 attempt (no retries for permanent failure), got %d", attemptCount)
+	}
+}
+
+func TestSelectBestEngineProvisioningBlocked(t *testing.T) {
+	// Test that SelectBestEngine checks health before provisioning
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/engines" {
+			// Return empty list - no engines available
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]engineState{})
+			return
+		}
+		t.Errorf("Unexpected request to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := &orchClient{
+		base:                server.URL,
+		maxStreamsPerEngine: 1,
+		hc:                  &http.Client{Timeout: 3 * time.Second},
+		ctx:                 ctx,
+		cancel:              cancel,
+	}
+
+	// Block provisioning
+	client.health.canProvision = false
+	client.health.blockedReason = "VPN disconnected"
+
+	// Should fail with provisioning blocked error
+	_, _, err := client.SelectBestEngine()
+	if err == nil {
+		t.Error("Expected error when provisioning is blocked")
+	}
+	if !strings.Contains(err.Error(), "cannot provision") {
+		t.Errorf("Expected 'cannot provision' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "VPN disconnected") {
+		t.Errorf("Expected 'VPN disconnected' in error, got: %v", err)
 	}
 }
