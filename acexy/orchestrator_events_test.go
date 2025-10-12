@@ -22,7 +22,7 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 		{
 			engine: engineState{
 				ContainerID:     "engine2",
-				Host:            "host2", 
+				Host:            "host2",
 				Port:            8002,
 				HealthStatus:    "healthy",
 				LastStreamUsage: now.Add(-5 * time.Minute), // More recent stream usage
@@ -71,11 +71,11 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 		for j := i + 1; j < len(availableEngines); j++ {
 			iEngine := availableEngines[i]
 			jEngine := availableEngines[j]
-			
+
 			// Primary sort: by health status (healthy engines first)
 			iHealthy := iEngine.engine.HealthStatus == "healthy"
 			jHealthy := jEngine.engine.HealthStatus == "healthy"
-			
+
 			if iHealthy != jHealthy {
 				// If one is healthy and other is not, prioritize healthy
 				if jHealthy && !iHealthy {
@@ -99,11 +99,11 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 	// Verify sorting results
 	// Expected order: healthy engines first, then by stream count, then by last_stream_usage
 	// 1. engine3 (healthy, 0 streams, oldest usage: -20min)
-	// 2. engine5 (healthy, 0 streams, newer usage: -1min)  
+	// 2. engine5 (healthy, 0 streams, newer usage: -1min)
 	// 3. engine1 (healthy, 1 stream, older usage: -10min)
 	// 4. engine2 (healthy, 1 stream, newer usage: -5min)
 	// 5. engine4 (unhealthy, 0 streams)
-	
+
 	// First should be healthy empty engine with oldest stream usage (engine3)
 	if availableEngines[0].engine.ContainerID != "engine3" {
 		t.Errorf("Expected engine3 (healthy, empty, oldest usage) to be first, got %s", availableEngines[0].engine.ContainerID)
@@ -150,6 +150,6 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 
 // Define the engineWithLoad type for testing (it's defined locally in the original function)
 type engineWithLoad struct {
-	engine       engineState
+	engine        engineState
 	activeStreams int
 }

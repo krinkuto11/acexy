@@ -113,7 +113,7 @@ func (a *Acexy) Init() {
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
-	
+
 	// Start a background goroutine to clean up stale streams
 	go a.cleanupStaleStreams()
 }
@@ -122,17 +122,17 @@ func (a *Acexy) Init() {
 func (a *Acexy) cleanupStaleStreams() {
 	ticker := time.NewTicker(5 * time.Minute) // Check every 5 minutes
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		a.mutex.Lock()
 		staleCutoff := time.Now().Add(-30 * time.Minute) // Consider streams older than 30 minutes as potentially stale
-		
+
 		for aceId, stream := range a.streams {
 			// Clean up streams that have no clients and no active player for more than 30 minutes
 			if stream.clients == 0 && stream.player == nil && stream.createdAt.Before(staleCutoff) {
 				slog.Warn("Cleaning up stale stream", "stream", aceId, "created_at", stream.createdAt)
 				delete(a.streams, aceId)
-				
+
 				// Close the done channel if not already closed
 				select {
 				case <-stream.done:
@@ -297,13 +297,13 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 	// Remove the stream from the list first to prevent further access
 	defer delete(a.streams, stream.ID)
 	slog.Debug("Stopping stream", "stream", stream.ID)
-	
+
 	// Close the stream backend connection (don't fail the cleanup if this fails)
 	if err := CloseStream(stream); err != nil {
 		slog.Debug("Error closing stream backend (continuing cleanup anyway)", "error", err)
 		// Don't return error here - we want to continue cleanup
 	}
-	
+
 	// Close the player connection if it exists
 	if ongoingStream.player != nil {
 		slog.Debug("Closing player", "stream", stream.ID)
