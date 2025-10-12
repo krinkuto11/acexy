@@ -64,10 +64,10 @@ func newOrchClient(base string) *orchClient {
 		ctx:                 ctx,
 		cancel:              cancel,
 	}
-	
+
 	// Start health monitoring in background
 	go client.StartHealthMonitor()
-	
+
 	return client
 }
 
@@ -90,13 +90,13 @@ func (c *orchClient) StartHealthMonitor() {
 	if c == nil {
 		return
 	}
-	
+
 	// Do initial health check immediately
 	c.updateHealth()
-	
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -112,20 +112,20 @@ func (c *orchClient) updateHealth() {
 	if c == nil {
 		return
 	}
-	
+
 	resp, err := c.hc.Get(c.base + "/orchestrator/status")
 	if err != nil {
 		slog.Warn("Health check failed", "error", err)
 		return
 	}
 	defer resp.Body.Close()
-	
+
 	var status orchestratorStatus
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		slog.Warn("Failed to decode health status", "error", err)
 		return
 	}
-	
+
 	c.health.mu.Lock()
 	defer c.health.mu.Unlock()
 	c.health.lastCheck = time.Now()
@@ -133,7 +133,7 @@ func (c *orchClient) updateHealth() {
 	c.health.canProvision = status.Provisioning.CanProvision
 	c.health.blockedReason = status.Provisioning.BlockedReason
 	c.health.vpnConnected = status.VPN.Connected
-	
+
 	slog.Debug("Orchestrator health updated",
 		"status", status.Status,
 		"can_provision", status.Provisioning.CanProvision,
@@ -145,10 +145,10 @@ func (c *orchClient) CanProvision() (bool, string) {
 	if c == nil {
 		return false, "orchestrator not configured"
 	}
-	
+
 	c.health.mu.RLock()
 	defer c.health.mu.RUnlock()
-	
+
 	return c.health.canProvision, c.health.blockedReason
 }
 
@@ -179,31 +179,31 @@ type endedEvent struct {
 
 // New types for engine selection and orchestrator API
 type engineState struct {
-	ContainerID       string            `json:"container_id"`
-	ContainerName     string            `json:"container_name,omitempty"`
-	Host              string            `json:"host"`
-	Port              int               `json:"port"`
-	Labels            map[string]string `json:"labels"`
-	FirstSeen         time.Time         `json:"first_seen"`
-	LastSeen          time.Time         `json:"last_seen"`
-	HealthStatus      string            `json:"health_status"`
-	LastHealthCheck   time.Time         `json:"last_health_check"`
-	LastStreamUsage   time.Time         `json:"last_stream_usage"`
-	Streams           []string          `json:"streams"`
+	ContainerID     string            `json:"container_id"`
+	ContainerName   string            `json:"container_name,omitempty"`
+	Host            string            `json:"host"`
+	Port            int               `json:"port"`
+	Labels          map[string]string `json:"labels"`
+	FirstSeen       time.Time         `json:"first_seen"`
+	LastSeen        time.Time         `json:"last_seen"`
+	HealthStatus    string            `json:"health_status"`
+	LastHealthCheck time.Time         `json:"last_health_check"`
+	LastStreamUsage time.Time         `json:"last_stream_usage"`
+	Streams         []string          `json:"streams"`
 }
 
 type streamState struct {
-	ID                  string    `json:"id"`
-	KeyType             string    `json:"key_type"`
-	Key                 string    `json:"key"`
-	ContainerID         string    `json:"container_id"`
-	PlaybackSessionID   string    `json:"playback_session_id"`
-	StatURL             string    `json:"stat_url"`
-	CommandURL          string    `json:"command_url"`
-	IsLive              bool      `json:"is_live"`
-	StartedAt           time.Time `json:"started_at"`
-	EndedAt             *time.Time `json:"ended_at,omitempty"`
-	Status              string    `json:"status"`
+	ID                string     `json:"id"`
+	KeyType           string     `json:"key_type"`
+	Key               string     `json:"key"`
+	ContainerID       string     `json:"container_id"`
+	PlaybackSessionID string     `json:"playback_session_id"`
+	StatURL           string     `json:"stat_url"`
+	CommandURL        string     `json:"command_url"`
+	IsLive            bool       `json:"is_live"`
+	StartedAt         time.Time  `json:"started_at"`
+	EndedAt           *time.Time `json:"ended_at,omitempty"`
+	Status            string     `json:"status"`
 }
 
 type aceProvisionRequest struct {
@@ -214,11 +214,11 @@ type aceProvisionRequest struct {
 }
 
 type aceProvisionResponse struct {
-	ContainerID         string `json:"container_id"`
-	ContainerName       string `json:"container_name"`
-	HostHTTPPort        int    `json:"host_http_port"`
-	ContainerHTTPPort   int    `json:"container_http_port"`
-	ContainerHTTPSPort  int    `json:"container_https_port"`
+	ContainerID        string `json:"container_id"`
+	ContainerName      string `json:"container_name"`
+	HostHTTPPort       int    `json:"host_http_port"`
+	ContainerHTTPPort  int    `json:"container_http_port"`
+	ContainerHTTPSPort int    `json:"container_https_port"`
 }
 
 func (c *orchClient) post(path string, body any) {
@@ -365,32 +365,32 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 	if c == nil {
 		return nil, fmt.Errorf("orchestrator client not configured")
 	}
-	
+
 	var lastErr error
-	
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Duration(1<<uint(attempt)) * time.Second
 			slog.Info("Retrying provision after backoff", "attempt", attempt+1, "backoff", backoff)
 			time.Sleep(backoff)
 		}
-		
+
 		resp, err := c.ProvisionAcestream()
 		if err == nil {
 			return resp, nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Don't retry on permanent errors (500)
 		if strings.Contains(err.Error(), "provisioning failed:") {
 			return nil, err
 		}
-		
+
 		// Retry on temporary errors (503)
 		slog.Warn("Provision attempt failed", "attempt", attempt+1, "error", err)
 	}
-	
+
 	return nil, fmt.Errorf("provisioning failed after %d attempts: %w", maxRetries, lastErr)
 }
 
@@ -458,7 +458,7 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 }
 
 // SelectBestEngine selects the best available engine based on load balancing rules
-// Returns host, port, and error. Prioritizes healthy engines first, then among engines with the same 
+// Returns host, port, and error. Prioritizes healthy engines first, then among engines with the same
 // health status and stream count, chooses the one with the oldest last_stream_usage timestamp.
 func (c *orchClient) SelectBestEngine() (string, int, error) {
 	if c == nil {
@@ -475,10 +475,10 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 
 	// Collect engines with their stream counts for prioritization
 	type engineWithLoad struct {
-		engine       engineState
+		engine        engineState
 		activeStreams int
 	}
-	
+
 	var availableEngines []engineWithLoad
 
 	// Check stream count for each engine
@@ -514,9 +514,9 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		if !canProvision {
 			return "", 0, fmt.Errorf("cannot provision: %s", reason)
 		}
-		
+
 		slog.Info("No available engines found (all at capacity), provisioning new acestream engine")
-		
+
 		// Use retry logic for provisioning
 		provResp, err := c.ProvisionWithRetry(3)
 		if err != nil {
@@ -525,7 +525,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 
 		// Shorter wait since orchestrator now syncs state immediately
 		time.Sleep(5 * time.Second)
-		
+
 		// Verify engine appears in list
 		engines, err := c.GetEngines()
 		if err == nil {
@@ -538,13 +538,13 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 				}
 			}
 		}
-		
+
 		// Still not found, wait a bit more and return anyway
 		slog.Warn("Engine not immediately available, continuing anyway")
 		time.Sleep(5 * time.Second)
 
 		slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
-		
+
 		// Use orchestrator-provided host port mapping directly
 		return "localhost", provResp.HostHTTPPort, nil
 	}
@@ -555,11 +555,11 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		for j := i + 1; j < len(availableEngines); j++ {
 			iEngine := availableEngines[i]
 			jEngine := availableEngines[j]
-			
+
 			// Primary sort: by health status (healthy engines first)
 			iHealthy := iEngine.engine.HealthStatus == "healthy"
 			jHealthy := jEngine.engine.HealthStatus == "healthy"
-			
+
 			if iHealthy != jHealthy {
 				// If one is healthy and other is not, prioritize healthy
 				if jHealthy && !iHealthy {
@@ -585,16 +585,16 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 	host := bestEngine.engine.Host
 	port := bestEngine.engine.Port
 
-	slog.Info("Selected best available engine", 
-		"container_id", bestEngine.engine.ContainerID, 
-		"container_name", bestEngine.engine.ContainerName, 
-		"host", host, 
-		"port", port, 
+	slog.Info("Selected best available engine",
+		"container_id", bestEngine.engine.ContainerID,
+		"container_name", bestEngine.engine.ContainerName,
+		"host", host,
+		"port", port,
 		"active_streams", bestEngine.activeStreams,
 		"max_streams", c.maxStreamsPerEngine,
 		"health_status", bestEngine.engine.HealthStatus,
 		"last_health_check", bestEngine.engine.LastHealthCheck.Format(time.RFC3339),
 		"last_stream_usage", bestEngine.engine.LastStreamUsage.Format(time.RFC3339))
-	
+
 	return host, port, nil
 }

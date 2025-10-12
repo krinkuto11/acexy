@@ -24,7 +24,7 @@ func TestCanProvision(t *testing.T) {
 	// Test with mocked health status
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	client := &orchClient{
 		base:                "http://test",
 		maxStreamsPerEngine: 1,

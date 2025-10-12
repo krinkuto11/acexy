@@ -22,15 +22,15 @@ import (
 )
 
 var (
-	addr              string
-	scheme            string
-	host              string
-	port              int
-	streamTimeout     time.Duration
-	m3u8              bool
-	emptyTimeout      time.Duration
-	size              Size
-	noResponseTimeout time.Duration
+	addr                string
+	scheme              string
+	host                string
+	port                int
+	streamTimeout       time.Duration
+	m3u8                bool
+	emptyTimeout        time.Duration
+	size                Size
+	noResponseTimeout   time.Duration
 	maxStreamsPerEngine int
 )
 
@@ -92,7 +92,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Select the best available engine from orchestrator if configured
 	var selectedHost string
 	var selectedPort int
-	
+
 	if p.Orch != nil {
 		// Try to get an available engine from orchestrator
 		host, port, err := p.Orch.SelectBestEngine()
@@ -113,7 +113,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, fmt.Sprintf("Service temporarily unavailable: %s", err.Error()), http.StatusServiceUnavailable)
 				return
 			}
-			
+
 			slog.Warn("Failed to select engine from orchestrator, falling back to configured engine", "error", err)
 			selectedHost = p.Acexy.Host
 			selectedPort = p.Acexy.Port
@@ -152,12 +152,12 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			// Generate stream ID for failed stream (use a placeholder playback ID)
 			failedStreamID := key + "|fetch_failed"
 			orchKeyType := mapAceIDTypeToOrchestrator(idType)
-			
+
 			// Emit stream_started first so orchestrator tracks the engine usage attempt
 			slog.Debug("Emitting stream_started event for failed fetch", "stream_id", failedStreamID, "host", selectedHost, "port", selectedPort)
 			p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
 				"fetch_failed", "", "", failedStreamID)
-			
+
 			// Then immediately emit stream_ended with the failure reason
 			slog.Debug("Emitting stream_ended event for failed stream fetch", "stream_id", failedStreamID)
 			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
@@ -388,7 +388,7 @@ func main() {
 	} else {
 		endpoint = acexy.MPEG_TS_ENDPOINT
 	}
-	
+
 	// Create orchestrator client
 	orchURL := os.Getenv("ACEXY_ORCH_URL")
 	var orchClient *orchClient
@@ -399,7 +399,7 @@ func main() {
 	} else {
 		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
 	}
-	
+
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
 		Scheme:            scheme,

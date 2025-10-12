@@ -32,7 +32,7 @@ func TestGetStreamTimeout(t *testing.T) {
 		Endpoint:          MPEG_TS_ENDPOINT,
 		NoResponseTimeout: 500 * time.Millisecond, // Short timeout for testing
 	}
-	
+
 	// Override port with actual test server port
 	if serverURL.Port() != "" {
 		acexy.Port = 0
