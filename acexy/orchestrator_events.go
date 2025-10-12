@@ -26,6 +26,9 @@ type orchClient struct {
 	// Context for background tasks
 	ctx    context.Context
 	cancel context.CancelFunc
+	// Pending streams tracker to avoid race conditions
+	pendingStreams   map[string]int // containerID -> count of streams being allocated
+	pendingStreamsMu sync.Mutex
 }
 
 // OrchestratorHealth tracks the health status of the orchestrator
@@ -63,6 +66,7 @@ func newOrchClient(base string) *orchClient {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
+		pendingStreams:      make(map[string]int),
 	}
 
 	// Start health monitoring in background
@@ -259,7 +263,26 @@ func (c *orchClient) post(path string, body any) {
 	}()
 }
 
-func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID, statURL, cmdURL, streamID string) {
+// ReleasePendingStream decrements the pending stream count for an engine
+// This should be called after a stream has been reported to the orchestrator or on failure
+func (c *orchClient) ReleasePendingStream(engineContainerID string) {
+	if c == nil || engineContainerID == "" {
+		return
+	}
+
+	c.pendingStreamsMu.Lock()
+	defer c.pendingStreamsMu.Unlock()
+
+	if count, exists := c.pendingStreams[engineContainerID]; exists && count > 0 {
+		c.pendingStreams[engineContainerID]--
+		if c.pendingStreams[engineContainerID] == 0 {
+			delete(c.pendingStreams, engineContainerID)
+		}
+		slog.Debug("Released pending stream allocation", "engine_container_id", engineContainerID, "remaining_pending", c.pendingStreams[engineContainerID])
+	}
+}
+
+func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID, statURL, cmdURL, streamID, engineContainerID string) {
 	if c == nil {
 		return
 	}
@@ -278,6 +301,9 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 		"host", host, "port", port, "playback_id", playbackID)
 
 	c.post("/events/stream_started", ev)
+	
+	// Release the pending stream allocation after reporting to orchestrator
+	c.ReleasePendingStream(engineContainerID)
 }
 
 func (c *orchClient) EmitEnded(streamID, reason string) {
@@ -458,17 +484,18 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 }
 
 // SelectBestEngine selects the best available engine based on load balancing rules
-// Returns host, port, and error. Prioritizes healthy engines first, then among engines with the same
+// Returns host, port, containerID, and error. Prioritizes healthy engines first, then among engines with the same
 // health status and stream count, chooses the one with the oldest last_stream_usage timestamp.
-func (c *orchClient) SelectBestEngine() (string, int, error) {
+// The containerID is used internally to track pending stream allocations and prevent race conditions.
+func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	if c == nil {
-		return "", 0, fmt.Errorf("orchestrator client not configured")
+		return "", 0, "", fmt.Errorf("orchestrator client not configured")
 	}
 
 	// Get all available engines
 	engines, err := c.GetEngines()
 	if err != nil {
-		return "", 0, fmt.Errorf("failed to get engines: %w", err)
+		return "", 0, "", fmt.Errorf("failed to get engines: %w", err)
 	}
 
 	slog.Debug("Found engines from orchestrator", "count", len(engines), "max_streams_per_engine", c.maxStreamsPerEngine)
@@ -496,13 +523,20 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 			}
 		}
 
-		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "host", engine.Host, "port", engine.Port, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
+		// Add pending streams to get total load
+		c.pendingStreamsMu.Lock()
+		pendingCount := c.pendingStreams[engine.ContainerID]
+		c.pendingStreamsMu.Unlock()
+		
+		totalStreams := activeStreams + pendingCount
 
-		// Only consider engines that have capacity
-		if activeStreams < c.maxStreamsPerEngine {
+		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "pending_streams", pendingCount, "total_streams", totalStreams, "host", engine.Host, "port", engine.Port, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
+
+		// Only consider engines that have capacity (including pending allocations)
+		if totalStreams < c.maxStreamsPerEngine {
 			availableEngines = append(availableEngines, engineWithLoad{
 				engine:        engine,
-				activeStreams: activeStreams,
+				activeStreams: totalStreams,
 			})
 		}
 	}
@@ -512,7 +546,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		// Check if we can provision before attempting
 		canProvision, reason := c.CanProvision()
 		if !canProvision {
-			return "", 0, fmt.Errorf("cannot provision: %s", reason)
+			return "", 0, "", fmt.Errorf("cannot provision: %s", reason)
 		}
 
 		slog.Info("No available engines found (all at capacity), provisioning new acestream engine")
@@ -520,8 +554,13 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		// Use retry logic for provisioning
 		provResp, err := c.ProvisionWithRetry(3)
 		if err != nil {
-			return "", 0, fmt.Errorf("failed to provision new engine: %w", err)
+			return "", 0, "", fmt.Errorf("failed to provision new engine: %w", err)
 		}
+
+		// Increment pending streams for the new engine
+		c.pendingStreamsMu.Lock()
+		c.pendingStreams[provResp.ContainerID]++
+		c.pendingStreamsMu.Unlock()
 
 		// Shorter wait since orchestrator now syncs state immediately
 		time.Sleep(5 * time.Second)
@@ -534,7 +573,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 					slog.Info("Provisioned engine found in orchestrator",
 						"container_id", provResp.ContainerID,
 						"container_name", provResp.ContainerName)
-					return "localhost", provResp.HostHTTPPort, nil
+					return "localhost", provResp.HostHTTPPort, provResp.ContainerID, nil
 				}
 			}
 		}
@@ -546,7 +585,7 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		slog.Info("Provisioned new engine", "container_id", provResp.ContainerID, "container_name", provResp.ContainerName, "host_port", provResp.HostHTTPPort, "container_port", provResp.ContainerHTTPPort)
 
 		// Use orchestrator-provided host port mapping directly
-		return "localhost", provResp.HostHTTPPort, nil
+		return "localhost", provResp.HostHTTPPort, provResp.ContainerID, nil
 	}
 
 	// Sort engines by health status first (healthy engines prioritized),
@@ -584,9 +623,15 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 	bestEngine := availableEngines[0]
 	host := bestEngine.engine.Host
 	port := bestEngine.engine.Port
+	containerID := bestEngine.engine.ContainerID
+
+	// Increment pending streams counter to prevent race conditions
+	c.pendingStreamsMu.Lock()
+	c.pendingStreams[containerID]++
+	c.pendingStreamsMu.Unlock()
 
 	slog.Info("Selected best available engine",
-		"container_id", bestEngine.engine.ContainerID,
+		"container_id", containerID,
 		"container_name", bestEngine.engine.ContainerName,
 		"host", host,
 		"port", port,
@@ -596,5 +641,5 @@ func (c *orchClient) SelectBestEngine() (string, int, error) {
 		"last_health_check", bestEngine.engine.LastHealthCheck.Format(time.RFC3339),
 		"last_stream_usage", bestEngine.engine.LastStreamUsage.Format(time.RFC3339))
 
-	return host, port, nil
+	return host, port, containerID, nil
 }

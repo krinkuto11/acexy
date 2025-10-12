@@ -92,10 +92,11 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Select the best available engine from orchestrator if configured
 	var selectedHost string
 	var selectedPort int
+	var selectedEngineContainerID string
 
 	if p.Orch != nil {
 		// Try to get an available engine from orchestrator
-		host, port, err := p.Orch.SelectBestEngine()
+		host, port, engineContainerID, err := p.Orch.SelectBestEngine()
 		if err != nil {
 			// Check if it's a provisioning issue and provide specific error messages
 			if strings.Contains(err.Error(), "VPN") {
@@ -120,6 +121,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		} else {
 			selectedHost = host
 			selectedPort = port
+			selectedEngineContainerID = engineContainerID
 			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
 		}
 	} else {
@@ -156,7 +158,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			// Emit stream_started first so orchestrator tracks the engine usage attempt
 			slog.Debug("Emitting stream_started event for failed fetch", "stream_id", failedStreamID, "host", selectedHost, "port", selectedPort)
 			p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
-				"fetch_failed", "", "", failedStreamID)
+				"fetch_failed", "", "", failedStreamID, selectedEngineContainerID)
 
 			// Then immediately emit stream_ended with the failure reason
 			slog.Debug("Emitting stream_ended event for failed stream fetch", "stream_id", failedStreamID)
@@ -185,7 +187,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		// Use the selected engine host/port instead of the original acexy configuration
 		orchKeyType := mapAceIDTypeToOrchestrator(orchEventData.idType)
 		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, orchEventData.key,
-			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID)
+			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID, selectedEngineContainerID)
 
 		// Ensure stream ended event is always emitted, even on errors
 		defer func() {
