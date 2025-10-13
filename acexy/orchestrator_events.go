@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -41,12 +42,23 @@ type orchClient struct {
 
 // OrchestratorHealth tracks the health status of the orchestrator
 type OrchestratorHealth struct {
-	mu            sync.RWMutex
-	lastCheck     time.Time
-	status        string
-	canProvision  bool
-	blockedReason string
-	vpnConnected  bool
+	mu                sync.RWMutex
+	lastCheck         time.Time
+	status            string
+	canProvision      bool
+	blockedReason     string
+	blockedReasonCode string // NEW: Error code for blocked reason
+	recoveryETA       int    // NEW: Estimated recovery time in seconds
+	shouldWait        bool   // NEW: Whether clients should wait/retry
+	vpnConnected      bool
+	capacity          CapacityInfo // NEW: Capacity information
+}
+
+// CapacityInfo represents orchestrator capacity status
+type CapacityInfo struct {
+	Total     int
+	Used      int
+	Available int
 }
 
 // orchestratorStatus represents the response from /orchestrator/status endpoint
@@ -56,9 +68,38 @@ type orchestratorStatus struct {
 		Connected bool `json:"connected"`
 	} `json:"vpn"`
 	Provisioning struct {
-		CanProvision  bool   `json:"can_provision"`
-		BlockedReason string `json:"blocked_reason"`
+		CanProvision         bool            `json:"can_provision"`
+		BlockedReason        string          `json:"blocked_reason"`
+		BlockedReasonDetails *ProvisionError `json:"blocked_reason_details"` // NEW: Enhanced error details
 	} `json:"provisioning"`
+	Capacity struct {
+		Total     int `json:"total"`
+		Used      int `json:"used"`
+		Available int `json:"available"`
+	} `json:"capacity"` // NEW: Capacity information
+}
+
+// ProvisionError represents structured error details from orchestrator
+type ProvisionError struct {
+	Error              string `json:"error"`
+	Code               string `json:"code"`
+	Message            string `json:"message"`
+	RecoveryETASeconds int    `json:"recovery_eta_seconds"`
+	CanRetry           bool   `json:"can_retry"`
+	ShouldWait         bool   `json:"should_wait"`
+}
+
+// ProvisioningError wraps a structured provisioning error with HTTP status code
+type ProvisioningError struct {
+	StatusCode int
+	Details    *ProvisionError
+}
+
+func (e *ProvisioningError) Error() string {
+	if e.Details != nil {
+		return fmt.Sprintf("provisioning %s: %s", e.Details.Code, e.Details.Message)
+	}
+	return fmt.Sprintf("provisioning failed with status %d", e.StatusCode)
 }
 
 func newOrchClient(base string) *orchClient {
@@ -193,11 +234,30 @@ func (c *orchClient) updateHealth() {
 	c.health.canProvision = status.Provisioning.CanProvision
 	c.health.blockedReason = status.Provisioning.BlockedReason
 	c.health.vpnConnected = status.VPN.Connected
+	c.health.capacity = CapacityInfo{
+		Total:     status.Capacity.Total,
+		Used:      status.Capacity.Used,
+		Available: status.Capacity.Available,
+	}
+
+	// Extract details from blocked reason if available
+	if status.Provisioning.BlockedReasonDetails != nil {
+		c.health.blockedReasonCode = status.Provisioning.BlockedReasonDetails.Code
+		c.health.recoveryETA = status.Provisioning.BlockedReasonDetails.RecoveryETASeconds
+		c.health.shouldWait = status.Provisioning.BlockedReasonDetails.ShouldWait
+	} else {
+		c.health.blockedReasonCode = ""
+		c.health.recoveryETA = 0
+		c.health.shouldWait = false
+	}
 
 	slog.Debug("Orchestrator health updated",
 		"status", status.Status,
 		"can_provision", status.Provisioning.CanProvision,
-		"vpn_connected", status.VPN.Connected)
+		"vpn_connected", status.VPN.Connected,
+		"blocked_code", c.health.blockedReasonCode,
+		"recovery_eta", c.health.recoveryETA,
+		"capacity_available", c.health.capacity.Available)
 }
 
 // CanProvision checks if orchestrator can provision new engines
@@ -210,6 +270,70 @@ func (c *orchClient) CanProvision() (bool, string) {
 	defer c.health.mu.RUnlock()
 
 	return c.health.canProvision, c.health.blockedReason
+}
+
+// GetProvisioningStatus returns detailed provisioning status including recovery information
+func (c *orchClient) GetProvisioningStatus() (canProvision bool, shouldWait bool, recoveryETA int) {
+	if c == nil {
+		return false, false, 0
+	}
+
+	c.health.mu.RLock()
+	defer c.health.mu.RUnlock()
+
+	return c.health.canProvision, c.health.shouldWait, c.health.recoveryETA
+}
+
+// parseProvisionError parses error response from provisioning endpoint
+// Handles both structured (new) and legacy (string) error formats
+func parseProvisionError(resp *http.Response) (*ProvisionError, error) {
+	var errorResp struct {
+		Detail json.RawMessage `json:"detail"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
+		return nil, fmt.Errorf("failed to decode error response: %w", err)
+	}
+
+	// Try to parse as structured error (new format)
+	var provError ProvisionError
+	if err := json.Unmarshal(errorResp.Detail, &provError); err == nil && provError.Code != "" {
+		return &provError, nil
+	}
+
+	// Fallback to string error (legacy format)
+	var stringDetail string
+	if err := json.Unmarshal(errorResp.Detail, &stringDetail); err == nil {
+		// Parse common error patterns to provide better error codes
+		code := "general_error"
+		shouldWait := false
+		recoveryETA := 0
+
+		if strings.Contains(stringDetail, "VPN") {
+			code = "vpn_disconnected"
+			shouldWait = true
+			recoveryETA = 60
+		} else if strings.Contains(stringDetail, "circuit breaker") || strings.Contains(stringDetail, "Circuit breaker") {
+			code = "circuit_breaker"
+			shouldWait = true
+			recoveryETA = 180
+		} else if strings.Contains(stringDetail, "capacity") {
+			code = "max_capacity"
+			shouldWait = true
+			recoveryETA = 30
+		}
+
+		return &ProvisionError{
+			Error:              "provisioning_failed",
+			Code:               code,
+			Message:            stringDetail,
+			RecoveryETASeconds: recoveryETA,
+			ShouldWait:         shouldWait,
+			CanRetry:           shouldWait,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse error response")
 }
 
 type startedEvent struct {
@@ -513,7 +637,26 @@ func (c *orchClient) GetEngineStreams(containerID string) ([]streamState, error)
 	return streams, nil
 }
 
-// ProvisionWithRetry provisions a new acestream engine with retry logic
+// calculateWaitTime determines how long to wait before retrying based on recovery ETA
+func calculateWaitTime(recoveryETA, attempt int) int {
+	if recoveryETA > 0 {
+		// Wait for half the ETA on first retry
+		if attempt == 1 {
+			return recoveryETA / 2
+		}
+		// Use full ETA for subsequent retries
+		return recoveryETA
+	}
+
+	// Exponential backoff if no ETA provided
+	waitTime := 30 * (1 << uint(attempt))
+	if waitTime > 120 {
+		return 120
+	}
+	return waitTime
+}
+
+// ProvisionWithRetry provisions a new acestream engine with intelligent retry logic
 func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, error) {
 	if c == nil {
 		return nil, fmt.Errorf("orchestrator client not configured")
@@ -522,12 +665,21 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt)) * time.Second
-			slog.Info("Retrying provision after backoff", "attempt", attempt+1, "backoff", backoff)
-			time.Sleep(backoff)
+		// Wait before retry if we had a structured error with recovery ETA
+		// (we extract this from the previous error, not from health check)
+		if attempt > 0 && lastErr != nil {
+			var prevErr *ProvisioningError
+			if errors.As(lastErr, &prevErr) && prevErr.Details.RecoveryETASeconds > 0 {
+				waitTime := calculateWaitTime(prevErr.Details.RecoveryETASeconds, attempt)
+				slog.Info("Waiting before retry based on previous error",
+					"attempt", attempt+1,
+					"wait_seconds", waitTime,
+					"reason", prevErr.Details.Code)
+				time.Sleep(time.Duration(waitTime) * time.Second)
+			}
 		}
 
+		// Attempt provisioning
 		resp, err := c.ProvisionAcestream()
 		if err == nil {
 			return resp, nil
@@ -535,13 +687,23 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 
 		lastErr = err
 
-		// Don't retry on permanent errors (500)
-		if strings.Contains(err.Error(), "provisioning failed:") {
-			return nil, err
-		}
+		// Check if we should retry based on error type
+		var provErr *ProvisioningError
+		if errors.As(err, &provErr) {
+			// Structured error
+			if !provErr.Details.ShouldWait {
+				// Don't retry permanent errors
+				return nil, err
+			}
 
-		// Retry on temporary errors (503)
-		slog.Warn("Provision attempt failed", "attempt", attempt+1, "error", err)
+			slog.Warn("Provisioning failed, will retry",
+				"attempt", attempt+1,
+				"code", provErr.Details.Code,
+				"recovery_eta", provErr.Details.RecoveryETASeconds)
+		} else {
+			// Legacy error handling - retry on temporary errors
+			slog.Warn("Provision attempt failed", "attempt", attempt+1, "error", err)
+		}
 	}
 
 	return nil, fmt.Errorf("provisioning failed after %d attempts: %w", maxRetries, lastErr)
@@ -579,35 +741,27 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	// Handle different HTTP error codes
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		// Temporary failure - VPN down or circuit breaker
-		var errResp struct {
-			Detail string `json:"detail"`
+	// Success
+	if resp.StatusCode == http.StatusOK {
+		var provResp aceProvisionResponse
+		if err := json.NewDecoder(resp.Body).Decode(&provResp); err != nil {
+			return nil, fmt.Errorf("failed to decode provision response: %w", err)
 		}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("provisioning temporarily unavailable: %s", errResp.Detail)
+		return &provResp, nil
 	}
 
-	if resp.StatusCode == http.StatusInternalServerError {
-		// Permanent error - configuration issue
-		var errResp struct {
-			Detail string `json:"detail"`
-		}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("provisioning failed: %s", errResp.Detail)
+	// Parse error response (supports both structured and legacy formats)
+	provError, parseErr := parseProvisionError(resp)
+	if parseErr != nil {
+		// Fallback if parsing fails
+		return nil, fmt.Errorf("provisioning failed with status %d: %v", resp.StatusCode, parseErr)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	// Return structured error
+	return nil, &ProvisioningError{
+		StatusCode: resp.StatusCode,
+		Details:    provError,
 	}
-
-	var provResp aceProvisionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&provResp); err != nil {
-		return nil, fmt.Errorf("failed to decode provision response: %w", err)
-	}
-
-	return &provResp, nil
 }
 
 // SelectBestEngine selects the best available engine based on load balancing rules
@@ -671,9 +825,23 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	// If no engines have capacity, provision a new one
 	if len(availableEngines) == 0 {
 		// Check if we can provision before attempting
-		canProvision, reason := c.CanProvision()
+		canProvision, shouldWait, recoveryETA := c.GetProvisioningStatus()
+
 		if !canProvision {
-			return "", 0, "", fmt.Errorf("cannot provision: %s", reason)
+			if shouldWait {
+				// Return structured error with recovery information
+				return "", 0, "", &ProvisioningError{
+					StatusCode: http.StatusServiceUnavailable,
+					Details: &ProvisionError{
+						Code:               c.health.blockedReasonCode,
+						Message:            c.health.blockedReason,
+						RecoveryETASeconds: recoveryETA,
+						ShouldWait:         true,
+						CanRetry:           true,
+					},
+				}
+			}
+			return "", 0, "", fmt.Errorf("cannot provision: %s", c.health.blockedReason)
 		}
 
 		slog.Info("No available engines found (all at capacity), provisioning new acestream engine")
@@ -681,7 +849,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		// Use retry logic for provisioning
 		provResp, err := c.ProvisionWithRetry(3)
 		if err != nil {
-			return "", 0, "", fmt.Errorf("failed to provision new engine: %w", err)
+			return "", 0, "", err
 		}
 
 		// Increment pending streams for the new engine
