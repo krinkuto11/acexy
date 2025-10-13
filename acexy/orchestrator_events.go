@@ -29,6 +29,14 @@ type orchClient struct {
 	// Pending streams tracker to avoid race conditions
 	pendingStreams   map[string]int // containerID -> count of streams being allocated
 	pendingStreamsMu sync.Mutex
+	// Track streams that have already had EmitEnded called to prevent duplicates
+	endedStreams   map[string]bool
+	endedStreamsMu sync.Mutex
+	// Engine list cache to reduce concurrent orchestrator queries
+	engineCache         []engineState
+	engineCacheTime     time.Time
+	engineCacheDuration time.Duration
+	engineCacheMu       sync.RWMutex
 }
 
 // OrchestratorHealth tracks the health status of the orchestrator
@@ -67,19 +75,67 @@ func newOrchClient(base string) *orchClient {
 		ctx:                 ctx,
 		cancel:              cancel,
 		pendingStreams:      make(map[string]int),
+		endedStreams:        make(map[string]bool),
+		engineCacheDuration: 2 * time.Second, // Cache engines for 2 seconds to reduce concurrent queries
 	}
 
 	// Start health monitoring in background
 	go client.StartHealthMonitor()
+	
+	// Start background cleanup for stale tracking data
+	go client.StartCleanupMonitor()
 
 	return client
 }
 
-// Close stops the health monitor
+// Close stops the health monitor and cleanup tasks
 func (c *orchClient) Close() {
 	if c != nil && c.cancel != nil {
 		c.cancel()
 	}
+}
+
+// StartCleanupMonitor periodically cleans up stale tracking data
+func (c *orchClient) StartCleanupMonitor() {
+	if c == nil {
+		return
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.cleanupStaleData()
+		}
+	}
+}
+
+// cleanupStaleData removes old entries from tracking maps
+func (c *orchClient) cleanupStaleData() {
+	if c == nil {
+		return
+	}
+
+	// Clean up ended streams tracking (keep only last 1000 entries)
+	c.endedStreamsMu.Lock()
+	if len(c.endedStreams) > 1000 {
+		// Clear all to prevent unbounded growth
+		// This is safe because streams that ended >5 minutes ago don't need tracking
+		slog.Debug("Cleaning up ended streams tracking map", "size", len(c.endedStreams))
+		c.endedStreams = make(map[string]bool)
+	}
+	c.endedStreamsMu.Unlock()
+
+	// Log any pending streams that might be stuck
+	c.pendingStreamsMu.Lock()
+	if len(c.pendingStreams) > 0 {
+		slog.Warn("Pending streams still tracked", "count", len(c.pendingStreams), "engines", c.pendingStreams)
+	}
+	c.pendingStreamsMu.Unlock()
 }
 
 // SetMaxStreamsPerEngine sets the maximum streams per engine configuration
@@ -263,6 +319,44 @@ func (c *orchClient) post(path string, body any) {
 	}()
 }
 
+// postSync sends a synchronous POST request to orchestrator (blocks until complete)
+// Used for critical events where ordering matters (e.g., stream_started)
+func (c *orchClient) postSync(path string, body any) {
+	if c == nil {
+		return
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		slog.Warn("Failed to marshal orchestrator event", "error", err, "path", path)
+		return
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.base+path, bytes.NewReader(b))
+	if err != nil {
+		slog.Warn("Failed to create orchestrator request", "error", err, "path", path)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.key != "" {
+		req.Header.Set("Authorization", "Bearer "+c.key)
+	}
+
+	slog.Debug("Sending synchronous event to orchestrator", "url", c.base+path)
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		slog.Warn("Failed to send event to orchestrator", "error", err, "url", c.base+path)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		slog.Warn("Orchestrator returned error status", "status", resp.StatusCode, "url", c.base+path)
+	} else {
+		slog.Debug("Successfully sent synchronous event to orchestrator", "status", resp.StatusCode, "url", c.base+path)
+	}
+}
+
 // ReleasePendingStream decrements the pending stream count for an engine
 // This should be called after a stream has been reported to the orchestrator or on failure
 func (c *orchClient) ReleasePendingStream(engineContainerID string) {
@@ -300,16 +394,29 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 		"stream_id", streamID, "key_type", keyType, "key", key,
 		"host", host, "port", port, "playback_id", playbackID)
 
-	c.post("/events/stream_started", ev)
+	// Post event synchronously to ensure ordering (started before ended)
+	c.postSync("/events/stream_started", ev)
 	
 	// Release the pending stream allocation after reporting to orchestrator
 	c.ReleasePendingStream(engineContainerID)
 }
 
 func (c *orchClient) EmitEnded(streamID, reason string) {
-	if c == nil {
+	if c == nil || streamID == "" {
 		return
 	}
+
+	// Check if we've already emitted ended for this stream (idempotency protection)
+	c.endedStreamsMu.Lock()
+	if c.endedStreams[streamID] {
+		c.endedStreamsMu.Unlock()
+		slog.Debug("Stream already ended, skipping duplicate EmitEnded",
+			"stream_id", streamID, "reason", reason)
+		return
+	}
+	// Mark as ended before releasing lock to prevent race
+	c.endedStreams[streamID] = true
+	c.endedStreamsMu.Unlock()
 
 	ev := endedEvent{ContainerID: c.containerID, StreamID: streamID, Reason: reason}
 
@@ -321,11 +428,24 @@ func (c *orchClient) EmitEnded(streamID, reason string) {
 }
 
 // GetEngines retrieves all available engines from the orchestrator
+// Results are cached for a short duration to reduce concurrent query load
 func (c *orchClient) GetEngines() ([]engineState, error) {
 	if c == nil {
 		return nil, fmt.Errorf("orchestrator client not configured")
 	}
 
+	// Check cache first with read lock
+	c.engineCacheMu.RLock()
+	if time.Since(c.engineCacheTime) < c.engineCacheDuration && c.engineCache != nil {
+		cachedEngines := make([]engineState, len(c.engineCache))
+		copy(cachedEngines, c.engineCache)
+		c.engineCacheMu.RUnlock()
+		slog.Debug("Returning cached engine list", "count", len(cachedEngines), "age", time.Since(c.engineCacheTime))
+		return cachedEngines, nil
+	}
+	c.engineCacheMu.RUnlock()
+
+	// Cache miss or expired, fetch fresh data
 	req, err := http.NewRequest(http.MethodGet, c.base+"/engines", nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -350,6 +470,13 @@ func (c *orchClient) GetEngines() ([]engineState, error) {
 		return nil, fmt.Errorf("failed to decode engines response: %w", err)
 	}
 
+	// Update cache with write lock
+	c.engineCacheMu.Lock()
+	c.engineCache = engines
+	c.engineCacheTime = time.Now()
+	c.engineCacheMu.Unlock()
+
+	slog.Debug("Fetched and cached engine list", "count", len(engines))
 	return engines, nil
 }
 
