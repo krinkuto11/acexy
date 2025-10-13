@@ -7,6 +7,7 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"javinator9889/acexy/lib/acexy"
@@ -98,7 +99,14 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		// Try to get an available engine from orchestrator
 		host, port, engineContainerID, err := p.Orch.SelectBestEngine()
 		if err != nil {
-			// Check if it's a provisioning issue and provide specific error messages
+			// Check if it's a structured provisioning error
+			var provErr *ProvisioningError
+			if errors.As(err, &provErr) {
+				p.handleProvisioningError(w, provErr)
+				return
+			}
+
+			// Check if it's a provisioning issue and provide specific error messages (legacy)
 			if strings.Contains(err.Error(), "VPN") {
 				slog.Error("Stream failed due to VPN issue", "error", err)
 				http.Error(w, "Service temporarily unavailable: VPN connection required", http.StatusServiceUnavailable)
@@ -247,6 +255,45 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	case <-p.Acexy.WaitStream(stream):
 		slog.Debug("Stream finished", "path", r.URL.Path)
 	}
+}
+
+// handleProvisioningError handles structured provisioning errors and returns user-friendly responses
+func (p *Proxy) handleProvisioningError(w http.ResponseWriter, err *ProvisioningError) {
+	details := err.Details
+
+	// Log with structured data
+	slog.Error("Provisioning blocked",
+		"code", details.Code,
+		"message", details.Message,
+		"recovery_eta", details.RecoveryETASeconds,
+		"should_wait", details.ShouldWait)
+
+	// Set Retry-After header if recovery ETA is available
+	if details.RecoveryETASeconds > 0 {
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", details.RecoveryETASeconds))
+	}
+
+	// Return user-friendly error based on code
+	var userMessage string
+	switch details.Code {
+	case "vpn_disconnected":
+		userMessage = "Service temporarily unavailable: VPN connection is being restored"
+	case "circuit_breaker":
+		userMessage = "Service temporarily unavailable: System is recovering from errors"
+	case "max_capacity":
+		userMessage = "Service at capacity: Please try again in a moment"
+	case "vpn_error":
+		userMessage = "Service temporarily unavailable: VPN error during provisioning"
+	default:
+		userMessage = "Service temporarily unavailable: " + details.Message
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":       userMessage,
+		"retry_after": details.RecoveryETASeconds,
+	})
 }
 
 func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
