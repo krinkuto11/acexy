@@ -213,6 +213,31 @@ This will start:
 
 If orchestrator integration is not configured or the orchestrator is unavailable, acexy will automatically fall back to the traditional single-engine mode using the configured `ACEXY_HOST` and `ACEXY_PORT`.
 
+## Debug Mode 🔍
+
+Acexy includes a comprehensive debug mode that provides detailed performance logging for troubleshooting and optimization. Debug mode captures:
+
+* **HTTP Request Timing** - Track request duration and detect slow requests
+* **Engine Selection** - Log engine selection decisions and timing
+* **Provisioning Operations** - Monitor provisioning attempts and retries
+* **Orchestrator Health** - Track orchestrator status and capacity
+* **Stream Lifecycle** - Record stream start/end events
+* **Stress Detection** - Automatically identify performance issues
+
+### Enabling Debug Mode
+
+```yaml
+services:
+  acexy-proxy:
+    environment:
+      - DEBUG_MODE=true
+      - DEBUG_LOG_DIR=/app/debug_logs
+    volumes:
+      - ./proxy_debug_logs:/app/debug_logs
+```
+
+Debug logs are written in JSON Lines format and organized by category (requests, engine_selection, provisioning, etc.). For complete documentation, see [doc/DEBUG_MODE.md](doc/DEBUG_MODE.md).
+
 ## Configuration Options ⚙
 
 Acexy has tons of configuration options that allow you to customize the behavior. All of them have
@@ -350,6 +375,24 @@ adjustable by using environment variables.
         Used for event reporting and engine identification.
       </th>
       <th><i>auto-detected</i></th>
+    <tr>
+    <tr>
+      <th><code>-debugMode</code></th>
+      <th><code>DEBUG_MODE</code></th>
+      <th>
+        Enable debug mode with detailed performance logging. Writes structured logs to files 
+        for troubleshooting and optimization. See <a href="doc/DEBUG_MODE.md">DEBUG_MODE.md</a> for details.
+      </th>
+      <th><code>false</code></th>
+    <tr>
+    <tr>
+      <th><code>-debugLogDir</code></th>
+      <th><code>DEBUG_LOG_DIR</code></th>
+      <th>
+        Directory where debug logs are written when debug mode is enabled. Logs are organized 
+        by category (requests, provisioning, etc.) in JSON Lines format.
+      </th>
+      <th><code>./debug_logs</code></th>
     <tr>
   </tbody>
 </table>
