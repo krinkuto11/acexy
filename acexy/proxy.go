@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"javinator9889/acexy/lib/acexy"
+	"javinator9889/acexy/lib/debug"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,6 +34,8 @@ var (
 	size                Size
 	noResponseTimeout   time.Duration
 	maxStreamsPerEngine int
+	debugMode           bool
+	debugLogDir         string
 )
 
 //go:embed LICENSE.short
@@ -67,8 +70,34 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
+	debugLog := debug.GetDebugLogger()
+	startTime := time.Now()
+	var statusCode int = http.StatusOK
+	var aceIDStr string
+
+	// Defer debug logging until the end
+	defer func() {
+		duration := time.Since(startTime)
+		debugLog.LogRequest(r.Method, r.URL.Path, duration, statusCode, aceIDStr)
+
+		// Detect slow requests (over 5 seconds)
+		if duration > 5*time.Second {
+			debugLog.LogStressEvent(
+				"slow_request",
+				"warning",
+				fmt.Sprintf("Request took %.2fs", duration.Seconds()),
+				map[string]interface{}{
+					"path":     r.URL.Path,
+					"ace_id":   aceIDStr,
+					"duration": duration.Seconds(),
+				},
+			)
+		}
+	}()
+
 	// Verify the request method
 	if r.Method != http.MethodGet {
+		statusCode = http.StatusMethodNotAllowed
 		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -78,13 +107,16 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Verify the client has included the ID parameter
 	aceId, err := acexy.NewAceID(q.Get("id"), q.Get("infohash"))
 	if err != nil {
+		statusCode = http.StatusBadRequest
 		slog.Error("ID parameter is required", "path", r.URL.Path, "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	aceIDStr = aceId.String()
 
 	// Check that the client is not trying to force a PID
 	if _, ok := q["pid"]; ok {
+		statusCode = http.StatusBadRequest
 		slog.Error("PID parameter is not allowed", "path", r.URL.Path)
 		http.Error(w, "PID parameter is not allowed", http.StatusBadRequest)
 		return
@@ -102,22 +134,26 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			// Check if it's a structured provisioning error
 			var provErr *ProvisioningError
 			if errors.As(err, &provErr) {
+				statusCode = http.StatusServiceUnavailable
 				p.handleProvisioningError(w, provErr)
 				return
 			}
 
 			// Check if it's a provisioning issue and provide specific error messages (legacy)
 			if strings.Contains(err.Error(), "VPN") {
+				statusCode = http.StatusServiceUnavailable
 				slog.Error("Stream failed due to VPN issue", "error", err)
 				http.Error(w, "Service temporarily unavailable: VPN connection required", http.StatusServiceUnavailable)
 				return
 			}
 			if strings.Contains(err.Error(), "circuit breaker") {
+				statusCode = http.StatusServiceUnavailable
 				slog.Error("Stream failed due to circuit breaker", "error", err)
 				http.Error(w, "Service temporarily unavailable: Too many failures, please retry later", http.StatusServiceUnavailable)
 				return
 			}
 			if strings.Contains(err.Error(), "cannot provision") {
+				statusCode = http.StatusServiceUnavailable
 				slog.Error("Stream failed - provisioning blocked", "error", err)
 				http.Error(w, fmt.Sprintf("Service temporarily unavailable: %s", err.Error()), http.StatusServiceUnavailable)
 				return
@@ -358,6 +394,8 @@ func parseArgs() {
 	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
 	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
 	flag.IntVar(&maxStreamsPerEngine, "maxStreamsPerEngine", 1, "Maximum streams per engine when using orchestrator")
+	flag.BoolVar(&debugMode, "debugMode", false, "Enable debug mode with detailed logging")
+	flag.StringVar(&debugLogDir, "debugLogDir", "./debug_logs", "Directory for debug logs")
 	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
 	size.Default = 1 << 20
 
@@ -407,6 +445,12 @@ func parseArgs() {
 			maxStreamsPerEngine = m
 		}
 	}
+	if v := os.Getenv("DEBUG_MODE"); v != "" {
+		debugMode = v == "1" || v == "true" || v == "TRUE"
+	}
+	if v := os.Getenv("DEBUG_LOG_DIR"); v != "" {
+		debugLogDir = v
+	}
 }
 
 func LookupLogLevel() slog.Level {
@@ -430,6 +474,12 @@ func main() {
 	parseArgs()
 	slog.SetLogLoggerLevel(LookupLogLevel())
 	slog.Debug("CLI Args", "args", flag.CommandLine)
+
+	// Initialize debug logger
+	debug.InitDebugLogger(debugMode, debugLogDir)
+	if debugMode {
+		slog.Info("Debug mode enabled", "log_dir", debugLogDir)
+	}
 
 	var endpoint acexy.AcexyEndpoint
 	if m3u8 {
