@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"javinator9889/acexy/lib/debug"
 	"log/slog"
 	"net/http"
 	"os"
@@ -210,6 +211,8 @@ func (c *orchClient) StartHealthMonitor() {
 
 // updateHealth fetches and updates the orchestrator health status
 func (c *orchClient) updateHealth() {
+	debugLog := debug.GetDebugLogger()
+	
 	if c == nil {
 		return
 	}
@@ -258,6 +261,34 @@ func (c *orchClient) updateHealth() {
 		"blocked_code", c.health.blockedReasonCode,
 		"recovery_eta", c.health.recoveryETA,
 		"capacity_available", c.health.capacity.Available)
+	
+	// Log orchestrator health for debugging
+	debugLog.LogOrchestratorHealth(
+		status.Status,
+		status.Provisioning.CanProvision,
+		status.Provisioning.BlockedReason,
+		c.health.blockedReasonCode,
+		c.health.recoveryETA,
+		status.VPN.Connected,
+		c.health.capacity.Total,
+		c.health.capacity.Used,
+		c.health.capacity.Available,
+	)
+	
+	// Detect degraded state
+	if status.Status == "degraded" {
+		debugLog.LogStressEvent(
+			"orchestrator_degraded",
+			"warning",
+			fmt.Sprintf("Orchestrator is degraded: %s", status.Provisioning.BlockedReason),
+			map[string]interface{}{
+				"blocked_reason": status.Provisioning.BlockedReason,
+				"blocked_code":   c.health.blockedReasonCode,
+				"capacity_used":  c.health.capacity.Used,
+				"capacity_total": c.health.capacity.Total,
+			},
+		)
+	}
 }
 
 // CanProvision checks if orchestrator can provision new engines
@@ -501,6 +532,9 @@ func (c *orchClient) ReleasePendingStream(engineContainerID string) {
 }
 
 func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID, statURL, cmdURL, streamID, engineContainerID string) {
+	debugLog := debug.GetDebugLogger()
+	startTime := time.Now()
+	
 	if c == nil {
 		return
 	}
@@ -521,11 +555,23 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 	// Post event synchronously to ensure ordering (started before ended)
 	c.postSync("/events/stream_started", ev)
 	
+	duration := time.Since(startTime)
+	debugLog.LogStreamEvent("stream_started", streamID, engineContainerID, duration, map[string]interface{}{
+		"host":        host,
+		"port":        port,
+		"key_type":    keyType,
+		"key":         key,
+		"playback_id": playbackID,
+	})
+	
 	// Release the pending stream allocation after reporting to orchestrator
 	c.ReleasePendingStream(engineContainerID)
 }
 
 func (c *orchClient) EmitEnded(streamID, reason string) {
+	debugLog := debug.GetDebugLogger()
+	startTime := time.Now()
+	
 	if c == nil || streamID == "" {
 		return
 	}
@@ -549,6 +595,11 @@ func (c *orchClient) EmitEnded(streamID, reason string) {
 		"stream_id", streamID, "reason", reason, "container_id", c.containerID)
 
 	c.post("/events/stream_ended", ev)
+	
+	duration := time.Since(startTime)
+	debugLog.LogStreamEvent("stream_ended", streamID, c.containerID, duration, map[string]interface{}{
+		"reason": reason,
+	})
 }
 
 // GetEngines retrieves all available engines from the orchestrator
@@ -658,6 +709,9 @@ func calculateWaitTime(recoveryETA, attempt int) int {
 
 // ProvisionWithRetry provisions a new acestream engine with intelligent retry logic
 func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, error) {
+	debugLog := debug.GetDebugLogger()
+	startTime := time.Now()
+	
 	if c == nil {
 		return nil, fmt.Errorf("orchestrator client not configured")
 	}
@@ -679,13 +733,21 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 			}
 		}
 
+		attemptStart := time.Now()
 		// Attempt provisioning
 		resp, err := c.ProvisionAcestream()
+		attemptDuration := time.Since(attemptStart)
+		
 		if err == nil {
+			totalDuration := time.Since(startTime)
+			debugLog.LogProvisioning("provision_success", totalDuration, true, "", attempt)
 			return resp, nil
 		}
 
 		lastErr = err
+		
+		// Log the failed attempt
+		debugLog.LogProvisioning("provision_attempt_failed", attemptDuration, false, err.Error(), attempt+1)
 
 		// Check if we should retry based on error type
 		var provErr *ProvisioningError
@@ -693,6 +755,8 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 			// Structured error
 			if !provErr.Details.ShouldWait {
 				// Don't retry permanent errors
+				totalDuration := time.Since(startTime)
+				debugLog.LogProvisioning("provision_failed_permanent", totalDuration, false, err.Error(), attempt+1)
 				return nil, err
 			}
 
@@ -700,12 +764,27 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 				"attempt", attempt+1,
 				"code", provErr.Details.Code,
 				"recovery_eta", provErr.Details.RecoveryETASeconds)
+			
+			// Log stress events for specific error codes
+			if provErr.Details.Code == "circuit_breaker" {
+				debugLog.LogStressEvent(
+					"provisioning_circuit_breaker",
+					"critical",
+					"Provisioning blocked by circuit breaker",
+					map[string]interface{}{
+						"attempt": attempt + 1,
+						"error":   err.Error(),
+					},
+				)
+			}
 		} else {
 			// Legacy error handling - retry on temporary errors
 			slog.Warn("Provision attempt failed", "attempt", attempt+1, "error", err)
 		}
 	}
 
+	totalDuration := time.Since(startTime)
+	debugLog.LogProvisioning("provision_failed", totalDuration, false, lastErr.Error(), maxRetries)
 	return nil, fmt.Errorf("provisioning failed after %d attempts: %w", maxRetries, lastErr)
 }
 
@@ -769,6 +848,9 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 // health status and stream count, chooses the one with the oldest last_stream_usage timestamp.
 // The containerID is used internally to track pending stream allocations and prevent race conditions.
 func (c *orchClient) SelectBestEngine() (string, int, string, error) {
+	debugLog := debug.GetDebugLogger()
+	startTime := time.Now()
+	
 	if c == nil {
 		return "", 0, "", fmt.Errorf("orchestrator client not configured")
 	}
@@ -776,6 +858,8 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	// Get all available engines
 	engines, err := c.GetEngines()
 	if err != nil {
+		duration := time.Since(startTime)
+		debugLog.LogEngineSelection("select_best_engine", "", 0, "", duration, err.Error())
 		return "", 0, "", fmt.Errorf("failed to get engines: %w", err)
 	}
 
@@ -935,6 +1019,23 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		"health_status", bestEngine.engine.HealthStatus,
 		"last_health_check", bestEngine.engine.LastHealthCheck.Format(time.RFC3339),
 		"last_stream_usage", bestEngine.engine.LastStreamUsage.Format(time.RFC3339))
+
+	// Log engine selection for debugging
+	duration := time.Since(startTime)
+	debugLog.LogEngineSelection("select_best_engine", host, port, containerID, duration, "")
+
+	// Detect slow engine selection
+	if duration > 2*time.Second {
+		debugLog.LogStressEvent(
+			"slow_engine_selection",
+			"warning",
+			fmt.Sprintf("Engine selection took %.2fs", duration.Seconds()),
+			map[string]interface{}{
+				"duration":     duration.Seconds(),
+				"engine_count": len(engines),
+			},
+		)
+	}
 
 	return host, port, containerID, nil
 }
