@@ -35,4 +35,4 @@ acexy/acexy-final
 *.db
 
 # macOS system files
-.DS_Store
+**/.DS_Store
