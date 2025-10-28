@@ -1,401 +1,186 @@
-# `acexy` - An AceStream Proxy Written In Go! ⚡
+# acexy
 
 [![Go Build](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml/badge.svg)](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml)
 [![Docker Release](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml/badge.svg?event=release)](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml)
 
+A high-performance AceStream proxy with orchestrator-based engine management for dynamic load balancing and automatic provisioning.
+
 ## Table of Contents
 
-- [How It Works? 🛠](#how-it-works-)
-- [Key Features 🔗](#key-features-)
-- [Usage 📐](#usage-)
-- [Optimizing 🚀](#optimizing-)
-  - [Alternative 🧃](#alternative-)
-- [Configuration Options ⚙](#configuration-options-)
+- [Orchestrator Integration](#orchestrator-integration)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Advanced Topics](#advanced-topics)
 
-## How It Works? 🛠
+## Orchestrator Integration
 
-This project is a wrapper around the
-[AceStream middleware HTTP API](https://docs.acestream.net/developers/start-playback/#using-middleware), allowing both
-[HLS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming) and
-[MPEG-TS](https://en.wikipedia.org/wiki/HTTP_Live_Streaming) playback
-of a stream.
+Acexy integrates with acestream-orchestrator to provide dynamic engine management and intelligent load balancing. This is the recommended deployment model for production environments.
 
-I was tired of the limitations of AceStream and some of the problems that 
-exist when playing a stream 📽. For example, it is only possible to play
-the same channel for **1 single client**. For having multiple clients
-playing **different streams**, you must manually add a unique `pid` per 
-client. If there was an error during the transmission, the **whole stream
-goes down**, etc.
+### Key Capabilities
 
-I found quite frustrating the experience of using AceStream in a home network
-with a single server and multiple clients, to try to optimize resources. This
-is the topology for which I am using AceStream:
+- **Dynamic Engine Pools**: Automatically manages multiple acestream engine instances
+- **Intelligent Load Balancing**: Distributes streams across engines based on configurable capacity limits
+- **Automatic Provisioning**: Provisions new engine containers on-demand when capacity is reached
+- **High Availability**: Automatic failover and health monitoring with graceful degradation
+- **Stream Multiplexing**: Multiple clients can consume the same stream simultaneously
 
-![AceStream Topology For My Network](doc/img/topology.svg)
+### How It Works
 
-There are some problems:
+1. Client requests a stream from acexy proxy
+2. Proxy queries orchestrator for available engine with capacity
+3. Orchestrator selects engine with fewest active streams (prioritizing empty engines)
+4. If no engines have capacity, orchestrator provisions a new engine container
+5. Proxy establishes stream connection to selected engine
+6. Stream lifecycle events are reported back to orchestrator for monitoring
 
-* Only **one client** can play the same stream at a time 🚫.
-* Having each client to run AceStream on their own is a waste of resources
-  and saturates the network 📉.
-* Multiple clients can play different streams if they have a unique `pid`
-  (Player ID) associated 🔓.
-* The standard AceStream HTTP API is not resilient enough against errors,
-  if the transmission stops it stops for every client ❌.
+### Fallback Mode
 
-## Key Features 🔗
+When orchestrator is unavailable or not configured, acexy automatically falls back to single-engine mode using `ACEXY_HOST` and `ACEXY_PORT` configuration.
 
-When using `acexy`, you automatically have:
+## Architecture
 
-* A single, centralized server running **all your AceStream streams** ⛓.
-* Automatic assignation of a unique `pid` (Player ID) **per client per stream** 🪪.
-* **Stream Multiplexing** 🕎: The same stream can be reproduced *at the
-  same time in multiple clients*.
-* **Resilient, error-proof** streaming thanks to the HTTP Middleware 🛡.
-* *Blazing fast, minimal proxy* ☄ written in Go!
-* **Orchestrator Integration** 🎛: Dynamic engine management and load balancing
-
-With this proxy, the following architecture is now possible:
+Acexy acts as a wrapper around the [AceStream middleware HTTP API](https://docs.acestream.net/developers/start-playback/#using-middleware), supporting both HLS and MPEG-TS playback with the following topology:
 
 ![acexy Topology](doc/img/acexy.svg)
 
-### New with Orchestrator Integration 🆕
+Without acexy, AceStream has limitations:
+- Only one client per stream (requires manual PID assignment for multiple clients)
+- No stream multiplexing capability
+- Limited error resilience
+- Resource inefficiency with multiple client instances
 
-With the built-in orchestrator integration, acexy now supports:
+Acexy addresses these limitations by:
+- Automatic PID assignment per client per stream
+- Stream multiplexing across multiple clients
+- Orchestrator-based engine management
+- Improved error handling and resilience
 
-* **Dynamic Engine Pools**: Automatically manages multiple acestream engines
-* **Intelligent Load Balancing**: One stream per engine with automatic provisioning  
-* **High Availability**: Automatic failover and engine replacement
-* **Zero Manual Configuration**: Engines are provisioned on-demand
+## Quick Start
 
-## Usage 📐
+### Using Docker Compose (Recommended)
 
-`acexy` is available and published as a Docker image. Make sure you have
-the latest [Docker](https://docker.com) image installed and available.
-
-**Recommended Setup (with Orchestrator)**: The acexy container will work with 
-the orchestrator to automatically manage acestream engines. This is the recommended
-approach for production deployments as it provides load balancing and high availability.
-
-**Legacy Setup**: The acexy container can also connect directly to a single AceStream 
-server for backwards compatibility.
-
-> **INFO**: There is a `docker-compose.yml` file in the repo you can directly
-> use to launch the whole block. This is **the recommended setup starting
-> from `v0.2.0`**.
-
-To run the services block, first grab the `docker-compose.yml` file, and run:
-
-```shell
-wget https://raw.githubusercontent.com/Javinator9889/acexy/refs/heads/main/docker-compose.yml
-docker compose run -d
-```
-
-If you don't want to use Docker Compose, assuming you already have an
-AceStream server, another way could be:
-
-```shell
-docker run --network host ghcr.io/javinator9889/acexy
-```
-
-> **NOTE**: For your convenience, a `docker-compose.yml` file is given with
-> all the possible adjustable parameters. It should be ready to run, and it's
-> the recommended way starting from `v0.2.0`.
-
-By default, the proxy will work in MPEG-TS mode. For switching between them,
-you must add the **`-m3u8` flag** or set **`ACEXY_M3U8=true` environment
-variable**.
-
-> **NOTE**: The HLS mode - `ACEXY_M3U8` or `-m3u8` flag - is in a non-tested
-> status. Using it is discouraged and not guaranteed to work.
-
-There is a single available endpoint: `/ace/getstream` which takes the same
-parameters as the standard
-[AceStream Middleware/HTTP API](https://docs.acestream.net/developers/api-reference/). Therefore,
-for running a stream, just open the following link in your preferred application - such as VLC:
-
-```
-http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
-```
-
-where `dd1e67078381739d14beca697356ab76d49d1a2` is the ID of the AceStream 
-channel.
-
-## Optimizing 🚀
-
-The AceStream Engine running behind of the proxy has a number of ports that can
-be exposed to optimize the performance. Those are, by default:
-
-- `8621/tcp`
-- `8621/udp`
-
-> NOTE: They can be adjusted through the `EXTRA_FLAGS` variable - within Docker - by
-> using the `--port` flag.
-
-Exposing those ports should help getting a more stable streaming experience. Notice
-that you will need to open up those ports on your gateway too.
-
-For reference, this is how you should run the Docker command:
-
-```shell
-docker run -t -p 8080:8080 -p 8621:8621 ghcr.io/javinator9889/acexy
-```
-
-### Alternative 🧃
-
-AceStream underneath attempts to use UPnP IGD to connect against a remote machine.
-The problem is that this is not working because of the bridging layer added by Docker
-(see: https://docs.docker.com/engine/network/drivers/bridge/).
-
-If you are running a single instance of Acexy - and a single instance of AceStream -
-it should be safe for you to run the container with *host networking*. This means:
-
-- The container **can access** any other application bridged to your main network.
-- You **don't need** to expose any ports.
-- Performance **is optimized** a little bit.
-
-> NOTE: This only works on Linux environments. See https://docs.docker.com/engine/network/drivers/host/
-> for more information.
-
-The command is quite straightforward:
-
-```shell
-docker run -t --network host ghcr.io/javinator9889/acexy
-```
-
-That should enable AceStream to use UPnP freely.
-
-## Orchestrator Integration 🎛
-
-Starting from version `v0.3.0`, acexy includes built-in integration with the acestream-orchestrator for automatic load balancing and engine management. This provides several key benefits:
-
-### Key Features 🔗
-
-* **Dynamic Engine Selection** 🎯: Automatically selects the best available engine for each stream
-* **Configurable Load Balancing** ⚖️: Configurable maximum streams per engine with empty engine prioritization  
-* **Auto-Provisioning** 🏭: Automatically provisions new engines when needed
-* **High Availability** 🛡: Graceful fallback to configured engine if orchestrator is unavailable
-* **Zero Configuration** ⚡: Works out-of-the-box with docker-compose setup
-
-### How It Works 🛠
-
-1. **Stream Request**: Client requests a stream from acexy
-2. **Engine Selection**: acexy queries orchestrator for available engines
-3. **Load Balancing**: Prioritizes empty engines, then engines with fewest streams within configured maximum
-4. **Auto-Provision**: If no engines have capacity, provisions a new acestream container
-5. **Stream Serving**: Serves stream from selected/provisioned engine
-6. **Event Tracking**: Reports stream events back to orchestrator for monitoring
-
-### Setup 📐
-
-The recommended way to use acexy with orchestrator integration is via the provided `docker-compose.yml`:
+The recommended deployment uses Docker Compose to run acexy with orchestrator integration:
 
 ```shell
 wget https://raw.githubusercontent.com/Javinator9889/acexy/refs/heads/main/docker-compose.yml
 docker compose up -d
 ```
 
-This will start:
-- **acexy** on port 8080 with orchestrator integration enabled
-- **orchestrator** on port 8000 for managing acestream engines
-- Automatic acestream engine provisioning as needed
+This starts:
+- acexy proxy on port 8080
+- orchestrator on port 8000
+- Automatic acestream engine provisioning
 
-### Configuration ⚙
+### Accessing Streams
+
+Acexy provides a single endpoint `/ace/getstream` compatible with the standard [AceStream Middleware/HTTP API](https://docs.acestream.net/developers/api-reference/):
+
+```
+http://127.0.0.1:8080/ace/getstream?id=<acestream-id>
+```
+
+Example:
+```
+http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
+```
+
+Open this URL in any media player that supports HTTP streaming (VLC, mpv, etc.).
+
+### Single Engine Mode
+
+For backwards compatibility or simple setups, acexy can connect directly to a single AceStream engine:
+
+```shell
+docker run --network host ghcr.io/javinator9889/acexy
+```
+
+In this mode, orchestrator integration is disabled and acexy uses `ACEXY_HOST` and `ACEXY_PORT` configuration.
+
+## Configuration
+
+### Core Orchestrator Settings
 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
-| `ACEXY_ORCH_URL` | Base URL for orchestrator API | _(empty - disabled)_ |
+| `ACEXY_ORCH_URL` | Orchestrator API base URL. Leave empty to disable orchestrator integration. | _(empty)_ |
 | `ACEXY_ORCH_APIKEY` | API key for orchestrator authentication | _(empty)_ |
-| `ACEXY_CONTAINER_ID` | Container ID for orchestrator identification | _(auto-detected)_ |
-| `ACEXY_MAX_STREAMS_PER_ENGINE` | Maximum streams allowed per engine when using orchestrator | `1` |
+| `ACEXY_MAX_STREAMS_PER_ENGINE` | Maximum streams per engine when using orchestrator | `1` |
+| `ACEXY_CONTAINER_ID` | Container ID for orchestrator identification (auto-detected in Docker) | _(auto-detected)_ |
 
-### Fallback Mode 🔄
+### Fallback Engine Settings
 
-If orchestrator integration is not configured or the orchestrator is unavailable, acexy will automatically fall back to the traditional single-engine mode using the configured `ACEXY_HOST` and `ACEXY_PORT`.
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `ACEXY_HOST` | AceStream engine host (used when orchestrator unavailable) | `localhost` |
+| `ACEXY_PORT` | AceStream engine port (used when orchestrator unavailable) | `6878` |
+| `ACEXY_SCHEME` | HTTP scheme for AceStream middleware | `http` |
 
-## Debug Mode 🔍
+### Proxy Settings
 
-Acexy includes a comprehensive debug mode that provides detailed performance logging for troubleshooting and optimization. Debug mode captures:
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `ACEXY_LISTEN_ADDR` | Address where acexy listens | `:8080` |
+| `ACEXY_BUFFER_SIZE` | Stream buffer size before copying to player | `4.2MiB` |
+| `ACEXY_NO_RESPONSE_TIMEOUT` | Timeout waiting for AceStream middleware response | `1s` |
+| `ACEXY_EMPTY_TIMEOUT` | Timeout to close stream after receiving empty data | `1m` |
 
-* **HTTP Request Timing** - Track request duration and detect slow requests
-* **Engine Selection** - Log engine selection decisions and timing
-* **Provisioning Operations** - Monitor provisioning attempts and retries
-* **Orchestrator Health** - Track orchestrator status and capacity
-* **Stream Lifecycle** - Record stream start/end events
-* **Stress Detection** - Automatically identify performance issues
+### Optional Features
 
-### Enabling Debug Mode
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `ACEXY_M3U8` | Enable HLS/M3U8 mode (experimental) | `false` |
+| `ACEXY_M3U8_STREAM_TIMEOUT` | Stream timeout in M3U8 mode | `60s` |
+| `DEBUG_MODE` | Enable detailed performance logging | `false` |
+| `DEBUG_LOG_DIR` | Directory for debug logs (JSON Lines format) | `./debug_logs` |
+
+For complete list of options, run: `acexy -help`
+
+## Advanced Topics
+
+### Network Optimization
+
+AceStream engine uses ports `8621/tcp` and `8621/udp` by default for P2P connections. Exposing these ports can improve streaming stability:
+
+```shell
+docker run -p 8080:8080 -p 8621:8621 ghcr.io/javinator9889/acexy
+```
+
+### Host Network Mode
+
+On Linux, using host networking mode allows AceStream to use UPnP IGD for NAT traversal without Docker's bridge networking limitations:
+
+```shell
+docker run --network host ghcr.io/javinator9889/acexy
+```
+
+Benefits:
+- No port exposure required
+- Direct network access for UPnP
+- Slight performance improvement
+
+Note: Host networking is only supported on Linux. See [Docker documentation](https://docs.docker.com/engine/network/drivers/host/) for details.
+
+### Debug Mode
+
+Enable comprehensive debug logging for troubleshooting and performance analysis:
 
 ```yaml
 services:
-  acexy-proxy:
+  acexy:
     environment:
       - DEBUG_MODE=true
       - DEBUG_LOG_DIR=/app/debug_logs
     volumes:
-      - ./proxy_debug_logs:/app/debug_logs
+      - ./debug_logs:/app/debug_logs
 ```
 
-Debug logs are written in JSON Lines format and organized by category (requests, engine_selection, provisioning, etc.). For complete documentation, see [doc/DEBUG_MODE.md](doc/DEBUG_MODE.md).
+Debug logs capture:
+- HTTP request timing and slow request detection
+- Engine selection decisions
+- Provisioning operations and retries
+- Orchestrator health status
+- Stream lifecycle events
+- Performance bottlenecks
 
-## Configuration Options ⚙
-
-Acexy has tons of configuration options that allow you to customize the behavior. All of them have
-default values that were tested for the optimal experience, but you may need to adjust them
-to fit your needs.
-
-> **PRO-TIP**: You can issue `acexy -help` to have a complete view of all the available options.
-
-As Acexy was thought to be run inside a Docker container, all the variables and settings are
-adjustable by using environment variables.
-
-
-<table>
-  <thead>
-    <tr>
-      <th>Flag</th>
-      <th>Environment Variable</th>
-      <th>Description</th>
-      <th>Default</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th><code>-license</code></th>
-      <th>-</th>
-      <th>Prints the program license and exits</th>
-      <th>-</th>
-    <tr>
-    <tr>
-      <th><code>-help</code></th>
-      <th>-</th>
-      <th>Prints the help message and exits</th>
-      <th>-</th>
-    <tr>
-    <tr>
-      <th><code>-addr</code></th>
-      <th><code>ACEXY_LISTEN_ADDR</code></th>
-      <th>Address where Acexy is listening to. Useful when running in <code>host</code> mode.</th>
-      <th><code>:8080</code></th>
-    <tr>
-    <tr>
-      <th><code>-scheme</code></th>
-      <th><code>ACEXY_SCHEME</code></th>
-      <th>
-        The scheme of the AceStream middleware. If you have configured AceStream to work in HTTPS,
-        you will have to tweak this value.
-      </th>
-      <th><code>http</code></th>
-    <tr>
-    <tr>
-      <th><code>-acestream-host</code></th>
-      <th><code>ACEXY_HOST</code></th>
-      <th>
-        Where the AceStream middleware is located. Used as fallback when orchestrator integration 
-        is not configured or unavailable.
-      </th>
-      <th><code>localhost</code></th>
-    <tr>
-    <tr>
-      <th><code>-acestream-port</code></th>
-      <th><code>ACEXY_PORT</code></th>
-      <th>
-        The port to connect to the AceStream middleware. Used as fallback when orchestrator 
-        integration is not configured or unavailable.
-      </th>
-      <th><code>6878</code></th>
-    <tr>
-    <tr>
-      <th><code>-m3u8-stream-timeout</code></th>
-      <th><code>ACEXY_M3U8_STREAM_TIMEOUT</code></th>
-      <th>
-        When running Acexy in M3U8 mode, the timeout to consider a stream is done.
-      </th>
-      <th><code>60s</code></th>
-    <tr>
-    <tr>
-      <th><code>-m3u8</code></th>
-      <th><code>ACEXY_M3U8</code></th>
-      <th>
-        Enable M3U8 mode in Acexy. <b>WARNING</b>: This mode is experimental and may not work as expected.
-      </th>
-      <th>Disabled</th>
-    <tr>
-    <tr>
-      <th><code>-empty-timeout</code></th>
-      <th><code>ACEXY_EMPTY_TIMEOUT</code></th>
-      <th>
-        Timeout to consider a stream is finished once empty information is received from
-        the middleware. Useless when in M3U8 mode.
-      </th>
-      <th><code>1m</code></th>
-    <tr>
-    <tr>
-      <th><code>-buffer-size</code></th>
-      <th><code>ACEXY_BUFFER_SIZE</code></th>
-      <th>
-        Buffers up-to <code>buffer-size</code> bytes of a stream before copying the data to the
-        player. Useful to have better stability during plays.
-      </th>
-      <th><code>4.2MiB</code></th>
-    <tr>
-    <tr>
-      <th><code>-no-response-timeout</code></th>
-      <th><code>ACEXY_NO_RESPONSE_TIMEOUT</code></th>
-      <th>
-        Time to wait for the AceStream middleware to return a response for a newly opened stream.
-        This must be as low as possible unless your Internet connection is really bad
-        (ie: You have very big latencies).
-      </th>
-      <th><code>1s</code></th>
-    <tr>
-    <tr>
-      <th>-</th>
-      <th><code>ACEXY_ORCH_URL</code></th>
-      <th>
-        Base URL for the orchestrator API. When set, enables orchestrator integration for 
-        dynamic engine selection and load balancing. Leave empty to disable orchestrator integration.
-      </th>
-      <th><i>empty</i></th>
-    <tr>
-    <tr>
-      <th>-</th>
-      <th><code>ACEXY_ORCH_APIKEY</code></th>
-      <th>
-        API key for orchestrator authentication. Required if the orchestrator has API key 
-        authentication enabled.
-      </th>
-      <th><i>empty</i></th>
-    <tr>
-    <tr>
-      <th>-</th>
-      <th><code>ACEXY_CONTAINER_ID</code></th>
-      <th>
-        Container ID for orchestrator identification. Usually auto-detected when running in Docker.
-        Used for event reporting and engine identification.
-      </th>
-      <th><i>auto-detected</i></th>
-    <tr>
-    <tr>
-      <th><code>-debugMode</code></th>
-      <th><code>DEBUG_MODE</code></th>
-      <th>
-        Enable debug mode with detailed performance logging. Writes structured logs to files 
-        for troubleshooting and optimization. See <a href="doc/DEBUG_MODE.md">DEBUG_MODE.md</a> for details.
-      </th>
-      <th><code>false</code></th>
-    <tr>
-    <tr>
-      <th><code>-debugLogDir</code></th>
-      <th><code>DEBUG_LOG_DIR</code></th>
-      <th>
-        Directory where debug logs are written when debug mode is enabled. Logs are organized 
-        by category (requests, provisioning, etc.) in JSON Lines format.
-      </th>
-      <th><code>./debug_logs</code></th>
-    <tr>
-  </tbody>
-</table>
-
-> **NOTE**: The list of options is extensive but could be outdated. Always refer to the
-> Acexy binary `-help` output when in doubt.
+For complete documentation, see [doc/DEBUG_MODE.md](doc/DEBUG_MODE.md).
