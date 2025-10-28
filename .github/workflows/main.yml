@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - main  # Puedes cambiar esto por la rama que prefieras (ej. master, develop)
+      - dev   # Añadimos la rama dev
   pull_request:
     branches:
       - main
+      - dev   # Añadimos la rama dev
 
 jobs:
   build:
@@ -36,8 +38,12 @@ jobs:
 
     - name: Build and push Docker image
       run: |
-        # Construir la imagen de Docker usando GHCR
-        docker build -t ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:latest .
-        
-        # Empujar la imagen a GHCR
-        docker push ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:latest
+        if [[ "${GITHUB_REF##*/}" == "dev" ]]; then
+          # Construir la imagen de Docker con etiqueta dev
+          docker build -t ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:dev .
+          docker push ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:dev
+        else
+          # Construir la imagen de Docker con etiqueta latest (main)
+          docker build -t ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:latest .
+          docker push ghcr.io/${{ github.repository_owner }}/acexy-orchestrator:latest
+        fi

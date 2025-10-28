@@ -28,7 +28,11 @@ go.work.sum
 acexy/acexy
 acexy/acexy-test
 acexy/acexy-fixed
+acexy/acexy-final
 
 # VSCode files - we don't want those to get pushed to the repo
 .vscode/
 *.db
+
+# macOS system files
+**/.DS_Store
