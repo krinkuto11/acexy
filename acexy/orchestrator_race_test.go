@@ -90,10 +90,10 @@ func TestPendingStreamTracking(t *testing.T) {
 
 	for engineID, count := range selectionCount {
 		if count > client.maxStreamsPerEngine {
-			t.Errorf("Engine %s was selected %d times, but max is %d", 
+			t.Errorf("Engine %s was selected %d times, but max is %d",
 				engineID, count, client.maxStreamsPerEngine)
 		} else {
-			t.Logf("Engine %s was correctly selected %d times (max=%d)", 
+			t.Logf("Engine %s was correctly selected %d times (max=%d)",
 				engineID, count, client.maxStreamsPerEngine)
 		}
 	}
@@ -157,6 +157,6 @@ func TestPendingStreamRelease(t *testing.T) {
 
 	// Verify releasing when already at 0 doesn't cause issues
 	client.ReleasePendingStream(engineID)
-	
+
 	t.Log("Pending stream release working correctly")
 }

@@ -123,7 +123,7 @@ func newOrchClient(base string) *orchClient {
 
 	// Start health monitoring in background
 	go client.StartHealthMonitor()
-	
+
 	// Start background cleanup for stale tracking data
 	go client.StartCleanupMonitor()
 
@@ -212,7 +212,7 @@ func (c *orchClient) StartHealthMonitor() {
 // updateHealth fetches and updates the orchestrator health status
 func (c *orchClient) updateHealth() {
 	debugLog := debug.GetDebugLogger()
-	
+
 	if c == nil {
 		return
 	}
@@ -261,7 +261,7 @@ func (c *orchClient) updateHealth() {
 		"blocked_code", c.health.blockedReasonCode,
 		"recovery_eta", c.health.recoveryETA,
 		"capacity_available", c.health.capacity.Available)
-	
+
 	// Log orchestrator health for debugging
 	debugLog.LogOrchestratorHealth(
 		status.Status,
@@ -274,7 +274,7 @@ func (c *orchClient) updateHealth() {
 		c.health.capacity.Used,
 		c.health.capacity.Available,
 	)
-	
+
 	// Detect degraded state
 	if status.Status == "degraded" {
 		debugLog.LogStressEvent(
@@ -399,7 +399,7 @@ type engineState struct {
 	Host             string            `json:"host"`
 	Port             int               `json:"port"`
 	Labels           map[string]string `json:"labels"`
-	Forwarded        bool              `json:"forwarded"`          // Whether P2P port is forwarded through VPN
+	Forwarded        bool              `json:"forwarded"` // Whether P2P port is forwarded through VPN
 	FirstSeen        time.Time         `json:"first_seen"`
 	LastSeen         time.Time         `json:"last_seen"`
 	HealthStatus     string            `json:"health_status"`
@@ -537,7 +537,7 @@ func (c *orchClient) ReleasePendingStream(engineContainerID string) {
 func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID, statURL, cmdURL, streamID, engineContainerID string) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
-	
+
 	if c == nil {
 		return
 	}
@@ -557,7 +557,7 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 
 	// Post event synchronously to ensure ordering (started before ended)
 	c.postSync("/events/stream_started", ev)
-	
+
 	duration := time.Since(startTime)
 	debugLog.LogStreamEvent("stream_started", streamID, engineContainerID, duration, map[string]interface{}{
 		"host":        host,
@@ -566,7 +566,7 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 		"key":         key,
 		"playback_id": playbackID,
 	})
-	
+
 	// Release the pending stream allocation after reporting to orchestrator
 	c.ReleasePendingStream(engineContainerID)
 }
@@ -574,7 +574,7 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 func (c *orchClient) EmitEnded(streamID, reason string) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
-	
+
 	if c == nil || streamID == "" {
 		return
 	}
@@ -598,7 +598,7 @@ func (c *orchClient) EmitEnded(streamID, reason string) {
 		"stream_id", streamID, "reason", reason, "container_id", c.containerID)
 
 	c.post("/events/stream_ended", ev)
-	
+
 	duration := time.Since(startTime)
 	debugLog.LogStreamEvent("stream_ended", streamID, c.containerID, duration, map[string]interface{}{
 		"reason": reason,
@@ -714,7 +714,7 @@ func calculateWaitTime(recoveryETA, attempt int) int {
 func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
-	
+
 	if c == nil {
 		return nil, fmt.Errorf("orchestrator client not configured")
 	}
@@ -740,7 +740,7 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 		// Attempt provisioning
 		resp, err := c.ProvisionAcestream()
 		attemptDuration := time.Since(attemptStart)
-		
+
 		if err == nil {
 			totalDuration := time.Since(startTime)
 			debugLog.LogProvisioning("provision_success", totalDuration, true, "", attempt)
@@ -748,7 +748,7 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 		}
 
 		lastErr = err
-		
+
 		// Log the failed attempt
 		debugLog.LogProvisioning("provision_attempt_failed", attemptDuration, false, err.Error(), attempt+1)
 
@@ -767,7 +767,7 @@ func (c *orchClient) ProvisionWithRetry(maxRetries int) (*aceProvisionResponse, 
 				"attempt", attempt+1,
 				"code", provErr.Details.Code,
 				"recovery_eta", provErr.Details.RecoveryETASeconds)
-			
+
 			// Log stress events for specific error codes
 			if provErr.Details.Code == "circuit_breaker" {
 				debugLog.LogStressEvent(
@@ -854,7 +854,7 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
-	
+
 	if c == nil {
 		return "", 0, "", fmt.Errorf("orchestrator client not configured")
 	}
@@ -896,7 +896,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		c.pendingStreamsMu.Lock()
 		pendingCount := c.pendingStreams[engine.ContainerID]
 		c.pendingStreamsMu.Unlock()
-		
+
 		totalStreams := activeStreams + pendingCount
 
 		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "pending_streams", pendingCount, "total_streams", totalStreams, "host", engine.Host, "port", engine.Port, "forwarded", engine.Forwarded, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
@@ -992,7 +992,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 				// Both have same health status, sort by forwarded status (forwarded engines prioritized)
 				iForwarded := iEngine.engine.Forwarded
 				jForwarded := jEngine.engine.Forwarded
-				
+
 				if iForwarded != jForwarded {
 					// If one is forwarded and other is not, prioritize forwarded
 					if jForwarded && !iForwarded {
