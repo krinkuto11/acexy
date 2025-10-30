@@ -13,12 +13,12 @@ import (
 // TestParseProvisionError_StructuredFormat tests parsing of new structured error format
 func TestParseProvisionError_StructuredFormat(t *testing.T) {
 	testCases := []struct {
-		name           string
-		responseBody   string
-		expectedCode   string
-		expectedETA    int
-		expectedWait   bool
-		expectedRetry  bool
+		name          string
+		responseBody  string
+		expectedCode  string
+		expectedETA   int
+		expectedWait  bool
+		expectedRetry bool
 	}{
 		{
 			name: "VPN disconnected",
@@ -81,7 +81,7 @@ func TestParseProvisionError_StructuredFormat(t *testing.T) {
 				w.Write([]byte(tc.responseBody))
 			}))
 			defer server.Close()
-			
+
 			// Make a request to get a real response
 			testResp, err := http.Get(server.URL)
 			if err != nil {
@@ -115,10 +115,10 @@ func TestParseProvisionError_StructuredFormat(t *testing.T) {
 // TestParseProvisionError_LegacyFormat tests parsing of legacy string error format
 func TestParseProvisionError_LegacyFormat(t *testing.T) {
 	testCases := []struct {
-		name          string
-		responseBody  string
-		expectedCode  string
-		expectedWait  bool
+		name         string
+		responseBody string
+		expectedCode string
+		expectedWait bool
 	}{
 		{
 			name:         "Legacy VPN error",
