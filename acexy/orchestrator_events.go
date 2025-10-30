@@ -394,17 +394,20 @@ type endedEvent struct {
 
 // New types for engine selection and orchestrator API
 type engineState struct {
-	ContainerID     string            `json:"container_id"`
-	ContainerName   string            `json:"container_name,omitempty"`
-	Host            string            `json:"host"`
-	Port            int               `json:"port"`
-	Labels          map[string]string `json:"labels"`
-	FirstSeen       time.Time         `json:"first_seen"`
-	LastSeen        time.Time         `json:"last_seen"`
-	HealthStatus    string            `json:"health_status"`
-	LastHealthCheck time.Time         `json:"last_health_check"`
-	LastStreamUsage time.Time         `json:"last_stream_usage"`
-	Streams         []string          `json:"streams"`
+	ContainerID      string            `json:"container_id"`
+	ContainerName    string            `json:"container_name,omitempty"`
+	Host             string            `json:"host"`
+	Port             int               `json:"port"`
+	Labels           map[string]string `json:"labels"`
+	Forwarded        bool              `json:"forwarded"`          // Whether P2P port is forwarded through VPN
+	FirstSeen        time.Time         `json:"first_seen"`
+	LastSeen         time.Time         `json:"last_seen"`
+	HealthStatus     string            `json:"health_status"`
+	LastHealthCheck  time.Time         `json:"last_health_check"`
+	LastStreamUsage  time.Time         `json:"last_stream_usage"`
+	LastCacheCleanup time.Time         `json:"last_cache_cleanup"` // Last time cache was cleaned
+	CacheSizeBytes   int64             `json:"cache_size_bytes"`   // Current cache size in bytes
+	Streams          []string          `json:"streams"`
 }
 
 type streamState struct {
@@ -844,9 +847,10 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 }
 
 // SelectBestEngine selects the best available engine based on load balancing rules
-// Returns host, port, containerID, and error. Prioritizes healthy engines first, then among engines with the same
-// health status and stream count, chooses the one with the oldest last_stream_usage timestamp.
-// The containerID is used internally to track pending stream allocations and prevent race conditions.
+// Returns host, port, containerID, and error. Prioritizes healthy engines first, then forwarded engines (faster),
+// then among engines with the same health status, forwarded status, and stream count, chooses the one with the
+// oldest last_stream_usage timestamp. The containerID is used internally to track pending stream allocations
+// and prevent race conditions.
 func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
@@ -895,7 +899,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		
 		totalStreams := activeStreams + pendingCount
 
-		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "pending_streams", pendingCount, "total_streams", totalStreams, "host", engine.Host, "port", engine.Port, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
+		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "pending_streams", pendingCount, "total_streams", totalStreams, "host", engine.Host, "port", engine.Port, "forwarded", engine.Forwarded, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
 
 		// Only consider engines that have capacity (including pending allocations)
 		if totalStreams < c.maxStreamsPerEngine {
@@ -968,6 +972,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	}
 
 	// Sort engines by health status first (healthy engines prioritized),
+	// then by forwarded status (forwarded engines prioritized as they are faster),
 	// then by stream count (ascending), then by last_stream_usage (ascending - oldest first)
 	for i := 0; i < len(availableEngines); i++ {
 		for j := i + 1; j < len(availableEngines); j++ {
@@ -984,14 +989,25 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 				}
 			} else {
-				// Both have same health status, sort by active stream count
-				if iEngine.activeStreams > jEngine.activeStreams {
-					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-				} else if iEngine.activeStreams == jEngine.activeStreams {
-					// Same health and stream count, sort by last_stream_usage (ascending - oldest first)
-					// This ensures that among engines with same health and stream count, we pick the one unused the longest
-					if iEngine.engine.LastStreamUsage.After(jEngine.engine.LastStreamUsage) {
+				// Both have same health status, sort by forwarded status (forwarded engines prioritized)
+				iForwarded := iEngine.engine.Forwarded
+				jForwarded := jEngine.engine.Forwarded
+				
+				if iForwarded != jForwarded {
+					// If one is forwarded and other is not, prioritize forwarded
+					if jForwarded && !iForwarded {
 						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+					}
+				} else {
+					// Both have same health and forwarded status, sort by active stream count
+					if iEngine.activeStreams > jEngine.activeStreams {
+						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+					} else if iEngine.activeStreams == jEngine.activeStreams {
+						// Same health, forwarded status, and stream count, sort by last_stream_usage (ascending - oldest first)
+						// This ensures that among engines with same health, forwarded status, and stream count, we pick the one unused the longest
+						if iEngine.engine.LastStreamUsage.After(jEngine.engine.LastStreamUsage) {
+							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+						}
 					}
 				}
 			}
@@ -1014,6 +1030,7 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		"container_name", bestEngine.engine.ContainerName,
 		"host", host,
 		"port", port,
+		"forwarded", bestEngine.engine.Forwarded,
 		"active_streams", bestEngine.activeStreams,
 		"max_streams", c.maxStreamsPerEngine,
 		"health_status", bestEngine.engine.HealthStatus,
