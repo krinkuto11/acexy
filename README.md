@@ -97,6 +97,23 @@ docker run --network host ghcr.io/javinator9889/acexy
 
 In this mode, orchestrator integration is disabled and acexy uses `ACEXY_HOST` and `ACEXY_PORT` configuration.
 
+### Multi-Architecture Support
+
+Acexy Docker images are built for multiple architectures using native runners for optimal performance:
+
+- **AMD64 (x86_64)**: Built on native AMD64 runners
+- **ARM64 (aarch64)**: Built on native ARM64 runners for Raspberry Pi 3/4/5, AWS Graviton, and other ARM64 devices
+- **ARMv7 (32-bit ARM)**: Built via QEMU emulation on ARM64 runners for Raspberry Pi 2 and older ARM devices
+
+Docker automatically selects the correct image for your platform:
+
+```shell
+# This command works on all supported architectures
+docker pull ghcr.io/javinator9889/acexy:latest
+```
+
+The multi-arch manifest ensures optimal performance by using native builds whenever possible, falling back to emulation only for ARMv7.
+
 ## Configuration
 
 ### Core Orchestrator Settings
