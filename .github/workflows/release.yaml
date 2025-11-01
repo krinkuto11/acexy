@@ -8,7 +8,16 @@ env:
 
 jobs:
     build-and-push-image:
-        runs-on: ubuntu-latest
+        runs-on: ${{ matrix.runner }}
+        strategy:
+            matrix:
+                include:
+                    - runner: ubuntu-latest
+                      platforms: linux/amd64
+                      arch: amd64
+                    - runner: ubuntu-24.04-arm
+                      platforms: linux/arm64,linux/arm/v7
+                      arch: arm64
         permissions:
             contents: write
             packages: write
@@ -30,10 +39,12 @@ jobs:
               uses: docker/metadata-action@v5
               with:
                 images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-                flavor: |
-                  latest=${{ !github.event.release.prerelease }}
+                tags: |
+                  type=semver,pattern={{version}},suffix=-${{ matrix.arch }}
+                  type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.arch }}
 
-            - name: Set up QEMU
+            - name: Set up QEMU (for ARM32 on ARM64 runner)
+              if: matrix.arch == 'arm64'
               uses: docker/setup-qemu-action@v3
 
             - name: Set up Docker Buildx
@@ -44,7 +55,7 @@ jobs:
               uses: docker/build-push-action@v6
               with:
                 context: .
-                platforms: linux/amd64,linux/arm64,linux/arm/v7
+                platforms: ${{ matrix.platforms }}
                 push: true
                 tags: ${{ steps.meta.outputs.tags }}
                 labels: ${{ steps.meta.outputs.labels }}
@@ -55,6 +66,40 @@ jobs:
                 subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
                 subject-digest: ${{ steps.push.outputs.digest }}
                 push-to-registry: true
+
+    create-manifest:
+        needs: build-and-push-image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            packages: write
+        steps:
+            - name: Check out the repository
+              uses: actions/checkout@v4
+
+            - name: Log in to the Container registry
+              uses: docker/login-action@v3
+              with:
+                registry: ${{ env.REGISTRY }}
+                username: ${{ github.actor }}
+                password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Extract metadata for manifest
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+                flavor: |
+                  latest=${{ !github.event.release.prerelease }}
+
+            - name: Create and push multi-arch manifest
+              run: |
+                TAGS="${{ steps.meta.outputs.tags }}"
+                for TAG in $TAGS; do
+                  docker buildx imagetools create -t $TAG \
+                    ${TAG}-amd64 \
+                    ${TAG}-arm64
+                done
 
             - name: Update release information
               uses: irongut/EditRelease@v1.2.0
