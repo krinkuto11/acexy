@@ -24,9 +24,9 @@ type DebugLogger struct {
 
 // LogEntry represents a single log entry with metadata
 type LogEntry struct {
-	SessionID      string                 `json:"session_id"`
-	Timestamp      string                 `json:"timestamp"`
-	ElapsedSeconds float64                `json:"elapsed_seconds"`
+	SessionID      string  `json:"session_id"`
+	Timestamp      string  `json:"timestamp"`
+	ElapsedSeconds float64 `json:"elapsed_seconds"`
 }
 
 // NewDebugLogger creates a new debug logger instance
@@ -65,7 +65,7 @@ func (d *DebugLogger) writeLog(category string, data map[string]interface{}) {
 		"timestamp":       time.Now().UTC().Format(time.RFC3339Nano),
 		"elapsed_seconds": time.Since(d.sessionStart).Seconds(),
 	}
-	
+
 	// Add all data fields to the entry
 	for k, v := range data {
 		entry[k] = v

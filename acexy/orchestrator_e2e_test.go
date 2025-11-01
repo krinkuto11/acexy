@@ -17,7 +17,7 @@ func TestE2E_VPNRecovery(t *testing.T) {
 	vpnConnected.Store(false) // Start with VPN disconnected
 
 	attemptCount := 0
-	
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/orchestrator/status":
@@ -28,7 +28,7 @@ func TestE2E_VPNRecovery(t *testing.T) {
 					"connected": vpnConnected.Load(),
 				},
 				"provisioning": map[string]interface{}{
-					"can_provision":  vpnConnected.Load(),
+					"can_provision": vpnConnected.Load(),
 					"blocked_reason": func() string {
 						if vpnConnected.Load() {
 							return ""
@@ -302,10 +302,10 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 				// Return an engine with capacity
 				json.NewEncoder(w).Encode([]engineState{
 					{
-						ContainerID:   "existing-engine",
-						Host:          "localhost",
-						Port:          19000,
-						HealthStatus:  "healthy",
+						ContainerID:     "existing-engine",
+						Host:            "localhost",
+						Port:            19000,
+						HealthStatus:    "healthy",
 						LastStreamUsage: time.Now().Add(-5 * time.Minute),
 					},
 				})
@@ -342,7 +342,7 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 	}()
 
 	t.Log("Attempting to select engine when at capacity...")
-	
+
 	// First attempt should fail with capacity error
 	_, _, _, err := client.SelectBestEngine()
 	if err == nil {
@@ -352,10 +352,10 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 
 	// Wait a bit for capacity
 	time.Sleep(2 * time.Second)
-	
+
 	// Update engine cache by calling GetEngines
 	client.engineCacheTime = time.Time{} // Invalidate cache
-	
+
 	// Second attempt should succeed
 	host, port, _, err := client.SelectBestEngine()
 	if err != nil {
