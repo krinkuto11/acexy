@@ -13,10 +13,10 @@ jobs:
             matrix:
                 include:
                     - runner: ubuntu-latest
-                      platform: linux/amd64
+                      platforms: linux/amd64
                       arch: amd64
                     - runner: ubuntu-24.04-arm
-                      platform: linux/arm64
+                      platforms: linux/arm64,linux/arm/v7
                       arch: arm64
         permissions:
             contents: write
@@ -39,8 +39,6 @@ jobs:
               uses: docker/metadata-action@v5
               with:
                 images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-                flavor: |
-                  latest=${{ !github.event.release.prerelease }}
                 tags: |
                   type=semver,pattern={{version}},suffix=-${{ matrix.arch }}
                   type=semver,pattern={{major}}.{{minor}},suffix=-${{ matrix.arch }}
@@ -57,7 +55,7 @@ jobs:
               uses: docker/build-push-action@v6
               with:
                 context: .
-                platforms: ${{ matrix.platform }}${{ matrix.arch == 'arm64' && ',linux/arm/v7' || '' }}
+                platforms: ${{ matrix.platforms }}
                 push: true
                 tags: ${{ steps.meta.outputs.tags }}
                 labels: ${{ steps.meta.outputs.labels }}
