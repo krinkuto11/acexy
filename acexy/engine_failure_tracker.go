@@ -128,7 +128,8 @@ func (t *EngineFailureTracker) CanAttempt(engineID string) (bool, string) {
 		if time.Since(state.circuitOpenedAt) < t.cooldownPeriod {
 			return false, "circuit breaker open due to consecutive failures"
 		}
-		// Cooldown period passed, allow retry (will be reset on success)
+		// Cooldown period passed, transition to half-open (allow retry)
+		// Circuit will be fully closed on next success, or re-opened on failure
 	}
 
 	return true, ""
@@ -154,8 +155,9 @@ func (t *EngineFailureTracker) Cleanup() {
 
 	now := time.Now()
 	for engineID, state := range t.failures {
-		// Remove entries for engines that haven't had failures in 10 minutes
-		if now.Sub(state.lastFailureTime) > 10*time.Minute {
+		// Only remove entries that have recorded failures and have been inactive for 10 minutes
+		// Skip engines with no failure history (lastFailureTime is zero)
+		if !state.lastFailureTime.IsZero() && now.Sub(state.lastFailureTime) > 10*time.Minute {
 			delete(t.failures, engineID)
 		}
 	}

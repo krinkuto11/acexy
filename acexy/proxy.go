@@ -560,7 +560,6 @@ func main() {
 	failureTracker := NewEngineFailureTracker()
 	stopChan := make(chan struct{})
 	go failureTracker.StartCleanupMonitor(stopChan)
-	defer close(stopChan)
 	slog.Info("Engine failure tracker initialized")
 
 	// Create a new Acexy instance
