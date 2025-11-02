@@ -400,7 +400,7 @@ func parseArgs() {
 	flag.StringVar(&debugLogDir, "debugLogDir", "./debug_logs", "Directory for debug logs")
 	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
 	size.Default = 1 << 20
-	flag.DurationVar(&serverReadTimeout, "server-read-timeout", LookupEnvOrDuration("ACEXY_SERVER_READ_TIMEOUT", 5*time.Second), "timeout in human-readable format to wait to finish reading a client connected to the proxy petition. Useful to prevent attacks or dangling clients blocking the proxy. Can be set with ACEXY_SERVER_READ_TIMEOUT environment variable.")
+	flag.DurationVar(&serverReadTimeout, "server-read-timeout", LookupEnvOrDuration("ACEXY_SERVER_READ_TIMEOUT", 5*time.Second), "timeout in human-readable format to wait to finish reading a client connected to the proxy request. Useful to prevent attacks or dangling clients blocking the proxy. Can be set with ACEXY_SERVER_READ_TIMEOUT environment variable.")
 	flag.DurationVar(&serverWriteTimeout, "server-write-timeout", LookupEnvOrDuration("ACEXY_SERVER_WRITE_TIMEOUT", 10*time.Second), "timeout in human-readable format to wait to finish writing streaming chunks to a client connected to the proxy. Useful to prevent attacks or dangling clients blocking the proxy. Can be set with ACEXY_SERVER_WRITE_TIMEOUT environment variable.")
 
 	// Actually parse the command line flags
@@ -477,6 +477,8 @@ func LookupEnvOrDuration(envVar string, defaultValue time.Duration) time.Duratio
 	if v := os.Getenv(envVar); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		} else {
+			slog.Warn("Invalid duration format in environment variable, using default", "var", envVar, "value", v, "default", defaultValue, "error", err)
 		}
 	}
 	return defaultValue
