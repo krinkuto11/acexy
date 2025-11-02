@@ -172,10 +172,13 @@ func (c *orchClient) cleanupStaleData() {
 	}
 	c.endedStreamsMu.Unlock()
 
-	// Log any pending streams that might be stuck
+	// Clean up stale pending streams that may have been orphaned due to errors
+	// Pending streams should typically be resolved within seconds, so anything still
+	// pending after 5 minutes is likely orphaned and should be cleared
 	c.pendingStreamsMu.Lock()
 	if len(c.pendingStreams) > 0 {
-		slog.Warn("Pending streams still tracked", "count", len(c.pendingStreams), "engines", c.pendingStreams)
+		slog.Warn("Clearing stale pending streams", "count", len(c.pendingStreams), "engines", c.pendingStreams)
+		c.pendingStreams = make(map[string]int)
 	}
 	c.pendingStreamsMu.Unlock()
 }
