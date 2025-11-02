@@ -47,8 +47,9 @@ var LICENSE string
 const APIv1_URL = "/ace"
 
 type Proxy struct {
-	Acexy *acexy.Acexy
-	Orch  *orchClient
+	Acexy          *acexy.Acexy
+	Orch           *orchClient
+	FailureTracker *EngineFailureTracker
 }
 
 type Size struct {
@@ -168,6 +169,20 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			selectedHost = host
 			selectedPort = port
 			selectedEngineContainerID = engineContainerID
+			
+			// Check if engine's circuit breaker is open
+			if p.FailureTracker != nil {
+				canAttempt, reason := p.FailureTracker.CanAttempt(engineContainerID)
+				if !canAttempt {
+					statusCode = http.StatusServiceUnavailable
+					slog.Warn("Engine circuit breaker open", "engine", engineContainerID, "reason", reason)
+					// Release the pending stream allocation
+					p.Orch.ReleasePendingStream(engineContainerID)
+					http.Error(w, "Service temporarily unavailable: Engine is recovering from failures", http.StatusServiceUnavailable)
+					return
+				}
+			}
+			
 			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
 		}
 	} else {
@@ -188,10 +203,35 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		p.Acexy.Port = originalPort
 	}()
 
+	// Record attempt for failure tracking and check rate limit
+	if p.FailureTracker != nil && selectedEngineContainerID != "" {
+		if !p.FailureTracker.RecordAttempt(selectedEngineContainerID) {
+			statusCode = http.StatusServiceUnavailable
+			slog.Warn("Engine at max concurrent attempts", "engine", selectedEngineContainerID)
+			// Release pending stream allocation
+			if p.Orch != nil {
+				p.Orch.ReleasePendingStream(selectedEngineContainerID)
+			}
+			http.Error(w, "Service temporarily unavailable: Engine is busy", http.StatusServiceUnavailable)
+			return
+		}
+		// Ensure we release the attempt slot when done
+		defer p.FailureTracker.ReleaseAttempt(selectedEngineContainerID)
+	}
+
 	// Gather the stream information
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+
+		// Record failure for circuit breaker
+		if p.FailureTracker != nil && selectedEngineContainerID != "" {
+			p.FailureTracker.RecordFailure(selectedEngineContainerID, "fetch_stream_failed")
+			consecutive, total, attempts, circuitOpen := p.FailureTracker.GetEngineHealth(selectedEngineContainerID)
+			slog.Warn("Engine failure recorded", "engine", selectedEngineContainerID, 
+				"consecutive_failures", consecutive, "total_failures", total, 
+				"total_attempts", attempts, "circuit_open", circuitOpen)
+		}
 
 		// Release pending stream allocation on failure
 		if p.Orch != nil && selectedEngineContainerID != "" {
@@ -262,12 +302,27 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	if err := p.Acexy.StartStream(stream, w); err != nil {
 		slog.Error("Failed to start stream", "stream", aceId, "error", err)
+		
+		// Record failure for circuit breaker
+		if p.FailureTracker != nil && selectedEngineContainerID != "" {
+			p.FailureTracker.RecordFailure(selectedEngineContainerID, "start_stream_failed")
+			consecutive, total, attempts, circuitOpen := p.FailureTracker.GetEngineHealth(selectedEngineContainerID)
+			slog.Warn("Engine failure recorded", "engine", selectedEngineContainerID, 
+				"consecutive_failures", consecutive, "total_failures", total, 
+				"total_attempts", attempts, "circuit_open", circuitOpen)
+		}
+		
 		// Emit error event to orchestrator before returning
 		if p.Orch != nil && orchEventData.streamID != "" {
 			p.Orch.EmitEnded(orchEventData.streamID, "start_stream_failed")
 		}
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Record success - stream started successfully
+	if p.FailureTracker != nil && selectedEngineContainerID != "" {
+		p.FailureTracker.RecordSuccess(selectedEngineContainerID)
 	}
 
 	// Now that we know the stream started successfully, write the status
@@ -501,6 +556,13 @@ func main() {
 		slog.Info("Orchestrator integration disabled - using fallback engine configuration", "host", host, "port", port)
 	}
 
+	// Create failure tracker for engine health monitoring
+	failureTracker := NewEngineFailureTracker()
+	stopChan := make(chan struct{})
+	go failureTracker.StartCleanupMonitor(stopChan)
+	defer close(stopChan)
+	slog.Info("Engine failure tracker initialized")
+
 	// Create a new Acexy instance
 	acexy := &acexy.Acexy{
 		Scheme:            scheme,
@@ -514,7 +576,7 @@ func main() {
 	acexy.Init()
 
 	// Create a new HTTP server
-	proxy := &Proxy{Acexy: acexy, Orch: orchClient}
+	proxy := &Proxy{Acexy: acexy, Orch: orchClient, FailureTracker: failureTracker}
 	mux := http.NewServeMux()
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
