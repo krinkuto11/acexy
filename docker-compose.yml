@@ -14,8 +14,6 @@ services:
       ACEXY_EMPTY_TIMEOUT: "60s"     # Timeout to close the connection if no data is received
       ACEXY_BUFFER: "4MB"            # Buffer size is 4MB
       ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
-      ACEXY_SERVER_READ_TIMEOUT: "5s"   # Timeout to finish reading client request
-      # Note: Write timeout is disabled for streaming (connections can be long-lived)
       # Orchestrator integration (enabled by default)
       ACEXY_ORCH_URL: "http://orchestrator:8000"     # Base URL for orchestrator API 
       ACEXY_ORCH_APIKEY: ""        # API key for orchestrator authentication (set in .env if needed)
