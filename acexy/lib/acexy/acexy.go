@@ -400,12 +400,15 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 						streamToRelease := currentStream.stream
 						if err := a.releaseStream(streamToRelease); err != nil {
 							slog.Warn("Error releasing stream after grace period", "stream", streamID, "error", err)
+							// releaseStream already resets releasePending and releaseTimer
 						} else {
 							slog.Info("Stream done", "stream", streamID)
+							// releaseStream already resets releasePending and releaseTimer
 						}
 					} else {
 						slog.Debug("Stream has clients again, not releasing", "stream", streamID, "clients", currentStream.clients)
 						currentStream.releasePending = false
+						currentStream.releaseTimer = nil
 					}
 				})
 			}
