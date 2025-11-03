@@ -63,13 +63,15 @@ type AceStream struct {
 }
 
 type ongoingStream struct {
-	clients   uint
-	done      chan struct{}
-	player    *http.Response
-	stream    *AceStream
-	copier    *Copier
-	writers   *pmw.PMultiWriter
-	createdAt time.Time // Track when the stream was created
+	clients        uint
+	done           chan struct{}
+	player         *http.Response
+	stream         *AceStream
+	copier         *Copier
+	writers        *pmw.PMultiWriter
+	createdAt      time.Time      // Track when the stream was created
+	releaseTimer   *time.Timer    // Timer for delayed stream release
+	releasePending bool           // Flag indicating a release is scheduled
 }
 
 // Structure referencing the AceStream Proxy - this is, ourselves
@@ -81,6 +83,7 @@ type Acexy struct {
 	EmptyTimeout      time.Duration // Timeout after which, if no data is written, the stream is closed
 	BufferSize        int           // The buffer size to use when copying the data
 	NoResponseTimeout time.Duration // Timeout to wait for a response from the AceStream middleware
+	StreamGracePeriod time.Duration // Grace period before releasing idle streams (0 clients)
 
 	// Information about ongoing streams
 	streams    map[AceID]*ongoingStream
@@ -202,12 +205,14 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 	}
 
 	a.streams[aceId] = &ongoingStream{
-		clients:   0,
-		done:      make(chan struct{}),
-		player:    nil,
-		stream:    stream,
-		writers:   pmw.New(),
-		createdAt: time.Now(),
+		clients:        0,
+		done:           make(chan struct{}),
+		player:         nil,
+		stream:         stream,
+		writers:        pmw.New(),
+		createdAt:      time.Now(),
+		releaseTimer:   nil,
+		releasePending: false,
 	}
 	slog.Info("Started new stream", "id", aceId, "clients", a.streams[aceId].clients)
 	return stream, nil
@@ -222,6 +227,14 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	if !ok {
 		slog.Debug("Stream not found", "stream", stream.ID)
 		return fmt.Errorf(`stream "%s" not found`, stream.ID)
+	}
+
+	// Cancel any pending release timer if a client is reconnecting
+	if ongoingStream.releaseTimer != nil {
+		ongoingStream.releaseTimer.Stop()
+		ongoingStream.releaseTimer = nil
+		ongoingStream.releasePending = false
+		slog.Debug("Cancelled pending stream release due to reconnection", "stream", stream.ID)
 	}
 
 	// Add the writer to the list of writers
@@ -294,6 +307,12 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
 	}
 
+	// Stop any pending release timer
+	if ongoingStream.releaseTimer != nil {
+		ongoingStream.releaseTimer.Stop()
+		ongoingStream.releaseTimer = nil
+	}
+
 	// Remove the stream from the list first to prevent further access
 	defer delete(a.streams, stream.ID)
 	slog.Debug("Stopping stream", "stream", stream.ID)
@@ -348,13 +367,48 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 		slog.Warn("Stream has no clients", "stream", stream.ID)
 	}
 
-	// Check if we have to stop the stream
+	// Check if we have to schedule stream release
 	if ongoingStream.clients == 0 {
-		if err := a.releaseStream(stream); err != nil {
-			slog.Warn("Error releasing stream", "error", err)
-			return err
+		// If grace period is configured and positive, delay the release
+		if a.StreamGracePeriod > 0 {
+			// Don't schedule another timer if one is already pending
+			if !ongoingStream.releasePending {
+				ongoingStream.releasePending = true
+				slog.Info("Scheduling stream release", "stream", stream.ID, "grace_period", a.StreamGracePeriod)
+				
+				// Create a timer that will release the stream after the grace period
+				ongoingStream.releaseTimer = time.AfterFunc(a.StreamGracePeriod, func() {
+					a.mutex.Lock()
+					defer a.mutex.Unlock()
+					
+					// Double-check that the stream still exists and has no clients
+					currentStream, ok := a.streams[stream.ID]
+					if !ok {
+						slog.Debug("Stream already released", "stream", stream.ID)
+						return
+					}
+					
+					if currentStream.clients == 0 {
+						slog.Info("Grace period expired, releasing stream", "stream", stream.ID)
+						if err := a.releaseStream(stream); err != nil {
+							slog.Warn("Error releasing stream after grace period", "stream", stream.ID, "error", err)
+						} else {
+							slog.Info("Stream done", "stream", stream.ID)
+						}
+					} else {
+						slog.Debug("Stream has clients again, not releasing", "stream", stream.ID, "clients", currentStream.clients)
+						currentStream.releasePending = false
+					}
+				})
+			}
+		} else {
+			// No grace period, release immediately (original behavior)
+			if err := a.releaseStream(stream); err != nil {
+				slog.Warn("Error releasing stream", "error", err)
+				return err
+			}
+			slog.Info("Stream done", "stream", stream.ID)
 		}
-		slog.Info("Stream done", "stream", stream.ID)
 	}
 	return nil
 }

@@ -38,6 +38,7 @@ var (
 	debugLogDir         string
 	serverReadTimeout   time.Duration
 	serverWriteTimeout  time.Duration
+	streamGracePeriod   time.Duration
 )
 
 //go:embed LICENSE.short
@@ -437,6 +438,7 @@ func parseArgs() {
 	flag.BoolVar(&m3u8, "m3u8", false, "M3U8 mode")
 	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
 	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
+	flag.DurationVar(&streamGracePeriod, "streamGracePeriod", 5*time.Second, "Grace period before releasing idle streams to handle reconnections")
 	flag.IntVar(&maxStreamsPerEngine, "maxStreamsPerEngine", 1, "Maximum streams per engine when using orchestrator")
 	flag.BoolVar(&debugMode, "debugMode", false, "Enable debug mode with detailed logging")
 	flag.StringVar(&debugLogDir, "debugLogDir", "./debug_logs", "Directory for debug logs")
@@ -479,6 +481,11 @@ func parseArgs() {
 	if v := os.Getenv("ACEXY_NO_RESPONSE_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			noResponseTimeout = d
+		}
+	}
+	if v := os.Getenv("ACEXY_STREAM_GRACE_PERIOD"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			streamGracePeriod = d
 		}
 	}
 	if v := os.Getenv("ACEXY_BUFFER"); v != "" {
@@ -571,6 +578,7 @@ func main() {
 		EmptyTimeout:      emptyTimeout,
 		BufferSize:        int(size.Get().(uint64)),
 		NoResponseTimeout: noResponseTimeout,
+		StreamGracePeriod: streamGracePeriod,
 	}
 	acexy.Init()
 
