@@ -259,28 +259,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	// Set response headers first, before starting the stream or writing status
-	// When in M3U8 mode, the client connects directly to a subset of endpoints, so we are blind to what the client
-	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
-	// simulating a new connection. Therefore, we can accumulate a lot of open streams and let
-	// the timeout finish them.
-	//
-	// When in MPEG-TS mode, the client connects to the endpoint and waits for the stream to finish.
-	// This is a blocking operation, so we can finish the stream when the client disconnects.
-	switch p.Acexy.Endpoint {
-	case acexy.M3U8_ENDPOINT:
-		w.Header().Set("Content-Type", "application/x-mpegURL")
-		timedOut := acexy.SetTimeout(streamTimeout)
-		defer func() {
-			<-timedOut
-			p.Acexy.StopStream(stream, w)
-		}()
-	case acexy.MPEG_TS_ENDPOINT:
-		w.Header().Set("Content-Type", "video/MP2T")
-		w.Header().Set("Transfer-Encoding", "chunked")
-		defer p.Acexy.StopStream(stream, w)
-	}
-
 	// And start playing the stream. The `StartStream` will dump the contents of the new or
 	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
 	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
@@ -313,6 +291,28 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Now that we know the stream started successfully, write the status
 	w.WriteHeader(http.StatusOK)
+
+	// Defer the stream finish. This will be called when the request is done. When in M3U8 mode,
+	// the client connects directly to a subset of endpoints, so we are blind to what the client
+	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
+	// simulating a new connection. Therefore, we can accumulate a lot of open streams and let
+	// the timeout finish them.
+	//
+	// When in MPEG-TS mode, the client connects to the endpoint and waits for the stream to finish.
+	// This is a blocking operation, so we can finish the stream when the client disconnects.
+	switch p.Acexy.Endpoint {
+	case acexy.M3U8_ENDPOINT:
+		w.Header().Set("Content-Type", "application/x-mpegURL")
+		timedOut := acexy.SetTimeout(streamTimeout)
+		defer func() {
+			<-timedOut
+			p.Acexy.StopStream(stream, w)
+		}()
+	case acexy.MPEG_TS_ENDPOINT:
+		w.Header().Set("Content-Type", "video/MP2T")
+		w.Header().Set("Transfer-Encoding", "chunked")
+		defer p.Acexy.StopStream(stream, w)
+	}
 
 	// And wait for the client to disconnect
 	select {
