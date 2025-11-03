@@ -220,7 +220,7 @@ func TestSelectBestEngine_CircuitBreakerCooldown(t *testing.T) {
 
 	// Create failure tracker with short cooldown for testing
 	failureTracker := NewEngineFailureTracker()
-	failureTracker.cooldownPeriod = 100 * time.Millisecond
+	failureTracker.cooldownPeriod = 100 * time.Millisecond // Short cooldown for testing
 	
 	// Open circuit breaker for engine-1
 	for i := 0; i < 3; i++ {
