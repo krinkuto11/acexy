@@ -141,8 +141,9 @@ The multi-arch manifest ensures optimal performance by using native builds whene
 | `ACEXY_BUFFER_SIZE` | Stream buffer size before copying to player | `4.2MiB` |
 | `ACEXY_NO_RESPONSE_TIMEOUT` | Timeout waiting for AceStream middleware response | `1s` |
 | `ACEXY_EMPTY_TIMEOUT` | Timeout to close stream after receiving empty data | `1m` |
-| `ACEXY_SERVER_READ_TIMEOUT` | Time to wait for a client connected to the proxy to finish transmitting the request. This must be set to an acceptable value to prevent dangling clients blocking the proxy with long running requests. | `5s` |
-| `ACEXY_SERVER_WRITE_TIMEOUT` | Time to wait to transmit streaming chunks (the video + audio) to a client connected to the proxy. This must be set to an acceptable value to prevent the proxy from being blocked by clients playing nasty with the server (e.g., disconnected but with the connection still open). | `10s` |
+| `ACEXY_SERVER_READ_TIMEOUT` | Time to wait for a client connected to the proxy to finish transmitting the request. This protects against slow request attacks. | `5s` |
+
+**Note:** The server write timeout is intentionally disabled (set to 0) for streaming video content. A write timeout would forcibly close connections after a fixed duration, even when actively streaming. Stream duration is instead controlled by client disconnection and the `ACEXY_EMPTY_TIMEOUT` setting.
 
 ### Optional Features
 

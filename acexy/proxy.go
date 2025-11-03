@@ -37,7 +37,6 @@ var (
 	debugMode           bool
 	debugLogDir         string
 	serverReadTimeout   time.Duration
-	serverWriteTimeout  time.Duration
 	streamGracePeriod   time.Duration
 )
 
@@ -432,7 +431,6 @@ func parseArgs() {
 	flag.Var(&size, "buffer", "Buffer size for copying (e.g. 1MiB)")
 	size.Default = 1 << 20
 	flag.DurationVar(&serverReadTimeout, "server-read-timeout", LookupEnvOrDuration("ACEXY_SERVER_READ_TIMEOUT", 5*time.Second), "timeout in human-readable format to wait to finish reading a client connected to the proxy request. Useful to prevent attacks or dangling clients blocking the proxy. Can be set with ACEXY_SERVER_READ_TIMEOUT environment variable.")
-	flag.DurationVar(&serverWriteTimeout, "server-write-timeout", LookupEnvOrDuration("ACEXY_SERVER_WRITE_TIMEOUT", 10*time.Second), "timeout in human-readable format to wait to finish writing streaming chunks to a client connected to the proxy. Useful to prevent attacks or dangling clients blocking the proxy. Can be set with ACEXY_SERVER_WRITE_TIMEOUT environment variable.")
 
 	// Actually parse the command line flags
 	flag.Parse()
@@ -579,11 +577,16 @@ func main() {
 
 	// Start the HTTP server
 	slog.Info("Starting server", "addr", addr)
+	
+	// For streaming video content, WriteTimeout must be 0 (disabled) to allow
+	// long-lived streaming connections. The timeout would otherwise forcibly close
+	// the connection after the specified duration, even if actively streaming.
+	// ReadTimeout is still enforced to protect against slow request attacks.
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
 		ReadTimeout:  serverReadTimeout,
-		WriteTimeout: serverWriteTimeout,
+		WriteTimeout: 0, // Disabled for streaming
 	}
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("Failed to start server", "error", err)
