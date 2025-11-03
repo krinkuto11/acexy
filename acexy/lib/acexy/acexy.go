@@ -230,9 +230,11 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	}
 
 	// Cancel any pending release timer if a client is reconnecting
-	if ongoingStream.releaseTimer != nil {
-		ongoingStream.releaseTimer.Stop()
-		ongoingStream.releaseTimer = nil
+	if ongoingStream.releaseTimer != nil || ongoingStream.releasePending {
+		if ongoingStream.releaseTimer != nil {
+			ongoingStream.releaseTimer.Stop()
+			ongoingStream.releaseTimer = nil
+		}
 		ongoingStream.releasePending = false
 		slog.Debug("Cancelled pending stream release due to reconnection", "stream", stream.ID)
 	}
@@ -312,6 +314,7 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 		ongoingStream.releaseTimer.Stop()
 		ongoingStream.releaseTimer = nil
 	}
+	ongoingStream.releasePending = false
 
 	// Remove the stream from the list first to prevent further access
 	defer delete(a.streams, stream.ID)
@@ -376,27 +379,32 @@ func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
 				ongoingStream.releasePending = true
 				slog.Info("Scheduling stream release", "stream", stream.ID, "grace_period", a.StreamGracePeriod)
 				
+				// Capture stream ID in local variable to avoid closure issues
+				streamID := stream.ID
+				
 				// Create a timer that will release the stream after the grace period
 				ongoingStream.releaseTimer = time.AfterFunc(a.StreamGracePeriod, func() {
 					a.mutex.Lock()
 					defer a.mutex.Unlock()
 					
 					// Double-check that the stream still exists and has no clients
-					currentStream, ok := a.streams[stream.ID]
+					currentStream, ok := a.streams[streamID]
 					if !ok {
-						slog.Debug("Stream already released", "stream", stream.ID)
+						slog.Debug("Stream already released", "stream", streamID)
 						return
 					}
 					
 					if currentStream.clients == 0 {
-						slog.Info("Grace period expired, releasing stream", "stream", stream.ID)
-						if err := a.releaseStream(stream); err != nil {
-							slog.Warn("Error releasing stream after grace period", "stream", stream.ID, "error", err)
+						slog.Info("Grace period expired, releasing stream", "stream", streamID)
+						// Create a stream reference for releaseStream
+						streamToRelease := currentStream.stream
+						if err := a.releaseStream(streamToRelease); err != nil {
+							slog.Warn("Error releasing stream after grace period", "stream", streamID, "error", err)
 						} else {
-							slog.Info("Stream done", "stream", stream.ID)
+							slog.Info("Stream done", "stream", streamID)
 						}
 					} else {
-						slog.Debug("Stream has clients again, not releasing", "stream", stream.ID, "clients", currentStream.clients)
+						slog.Debug("Stream has clients again, not releasing", "stream", streamID, "clients", currentStream.clients)
 						currentStream.releasePending = false
 					}
 				})
