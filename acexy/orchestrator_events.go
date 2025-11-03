@@ -854,7 +854,8 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 // then among engines with the same health status, forwarded status, and stream count, chooses the one with the
 // oldest last_stream_usage timestamp. The containerID is used internally to track pending stream allocations
 // and prevent race conditions.
-func (c *orchClient) SelectBestEngine() (string, int, string, error) {
+// If failureTracker is provided, engines with open circuit breakers are filtered out during selection.
+func (c *orchClient) SelectBestEngine(failureTracker *EngineFailureTracker) (string, int, string, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
 
@@ -882,6 +883,17 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 
 	// Check stream count for each engine
 	for _, engine := range engines {
+		// Filter out engines with open circuit breakers if failure tracker is provided
+		if failureTracker != nil {
+			canAttempt, reason := failureTracker.CanAttempt(engine.ContainerID)
+			if !canAttempt {
+				slog.Debug("Skipping engine with open circuit breaker",
+					"container_id", engine.ContainerID,
+					"reason", reason)
+				continue
+			}
+		}
+
 		streams, err := c.GetEngineStreams(engine.ContainerID)
 		if err != nil {
 			slog.Warn("Failed to get streams for engine", "container_id", engine.ContainerID, "error", err)

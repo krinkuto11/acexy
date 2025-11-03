@@ -393,7 +393,7 @@ func TestSelectBestEngine_StructuredError(t *testing.T) {
 	client.updateHealth()
 
 	// Try to select engine
-	_, _, _, err := client.SelectBestEngine()
+	_, _, _, err := client.SelectBestEngine(nil)
 	if err == nil {
 		t.Fatal("Expected error, got nil")
 	}

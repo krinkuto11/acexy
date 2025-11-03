@@ -344,7 +344,7 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 	t.Log("Attempting to select engine when at capacity...")
 
 	// First attempt should fail with capacity error
-	_, _, _, err := client.SelectBestEngine()
+	_, _, _, err := client.SelectBestEngine(nil)
 	if err == nil {
 		// If we get here before capacity is available, it's expected to fail
 		t.Log("First attempt returned immediately (expected behavior)")
@@ -357,7 +357,7 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 	client.engineCacheTime = time.Time{} // Invalidate cache
 
 	// Second attempt should succeed
-	host, port, _, err := client.SelectBestEngine()
+	host, port, _, err := client.SelectBestEngine(nil)
 	if err != nil {
 		t.Fatalf("Expected success after capacity available, got: %v", err)
 	}

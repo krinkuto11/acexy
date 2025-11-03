@@ -133,7 +133,7 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	if p.Orch != nil {
 		// Try to get an available engine from orchestrator
-		host, port, engineContainerID, err := p.Orch.SelectBestEngine()
+		host, port, engineContainerID, err := p.Orch.SelectBestEngine(p.FailureTracker)
 		if err != nil {
 			// Check if it's a structured provisioning error
 			var provErr *ProvisioningError
@@ -170,19 +170,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			selectedHost = host
 			selectedPort = port
 			selectedEngineContainerID = engineContainerID
-			
-			// Check if engine's circuit breaker is open
-			if p.FailureTracker != nil {
-				canAttempt, reason := p.FailureTracker.CanAttempt(engineContainerID)
-				if !canAttempt {
-					statusCode = http.StatusServiceUnavailable
-					slog.Warn("Engine circuit breaker open", "engine", engineContainerID, "reason", reason)
-					// Release the pending stream allocation
-					p.Orch.ReleasePendingStream(engineContainerID)
-					http.Error(w, "Service temporarily unavailable: Engine is recovering from failures", http.StatusServiceUnavailable)
-					return
-				}
-			}
 			
 			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
 		}
