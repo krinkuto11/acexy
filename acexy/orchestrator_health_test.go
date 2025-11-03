@@ -230,7 +230,7 @@ func TestSelectBestEngineProvisioningBlocked(t *testing.T) {
 	client.health.blockedReason = "VPN disconnected"
 
 	// Should fail with provisioning blocked error
-	_, _, _, err := client.SelectBestEngine()
+	_, _, _, err := client.SelectBestEngine(nil)
 	if err == nil {
 		t.Error("Expected error when provisioning is blocked")
 	}

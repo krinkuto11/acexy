@@ -70,7 +70,7 @@ func TestPendingStreamTracking(t *testing.T) {
 	for i := 0; i < numRequests; i++ {
 		go func() {
 			defer wg.Done()
-			host, port, containerID, err := client.SelectBestEngine()
+			host, port, containerID, err := client.SelectBestEngine(nil)
 			if err == nil {
 				selectionMu.Lock()
 				selectionCount[containerID]++

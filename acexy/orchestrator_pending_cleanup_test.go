@@ -70,7 +70,7 @@ func TestPendingStreamCleanup(t *testing.T) {
 	client.SetMaxStreamsPerEngine(2)
 
 	// Test 1: Verify pending stream is incremented when selecting engine
-	host, port, containerID, err := client.SelectBestEngine()
+	host, port, containerID, err := client.SelectBestEngine(nil)
 	if err != nil {
 		t.Fatalf("Expected successful engine selection, got error: %v", err)
 	}
