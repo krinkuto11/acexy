@@ -207,6 +207,9 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			// Then immediately emit stream_ended with the failure reason
 			slog.Debug("Emitting stream_ended event for failed stream fetch", "stream_id", failedStreamID)
 			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
+
+			// Record engine failure for error recovery tracking
+			p.Orch.RecordEngineFailure(selectedEngineContainerID)
 		}
 
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
@@ -276,6 +279,8 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		// Emit error event to orchestrator before returning
 		if p.Orch != nil && orchEventData.streamID != "" {
 			p.Orch.EmitEnded(orchEventData.streamID, "start_stream_failed")
+			// Record engine failure for error recovery tracking
+			p.Orch.RecordEngineFailure(selectedEngineContainerID)
 		}
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -283,6 +288,11 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Now that we know the stream started successfully, write the status
 	w.WriteHeader(http.StatusOK)
+
+	// Reset engine error state on successful stream start
+	if p.Orch != nil && selectedEngineContainerID != "" {
+		p.Orch.ResetEngineErrors(selectedEngineContainerID)
+	}
 
 	// And wait for the client to disconnect
 	select {
