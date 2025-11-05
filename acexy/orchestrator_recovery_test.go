@@ -159,7 +159,7 @@ func TestResetEngineErrors(t *testing.T) {
 // TestSelectBestEngine_SkipsRecovering tests that recovering engines are skipped
 func TestSelectBestEngine_SkipsRecovering(t *testing.T) {
 	now := time.Now()
-	
+
 	// Create mock server for orchestrator
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/engines" {
@@ -237,7 +237,7 @@ func TestSelectBestEngine_AllRecovering(t *testing.T) {
 	now := time.Now()
 	var provisionCalled bool
 	var mu sync.Mutex
-	
+
 	// Create mock server for orchestrator
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/engines" {
@@ -290,7 +290,7 @@ func TestSelectBestEngine_AllRecovering(t *testing.T) {
 			mu.Lock()
 			provisionCalled = true
 			mu.Unlock()
-			
+
 			// Return a new provisioned engine
 			resp := aceProvisionResponse{
 				ContainerID:   "new-provisioned-engine",

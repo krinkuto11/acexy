@@ -53,10 +53,10 @@ type orchClient struct {
 
 // engineErrorState tracks error recovery state for an engine
 type engineErrorState struct {
-	failCount      int       // Number of consecutive failures
-	recovering     bool      // Whether engine is in recovery mode
-	recoveryStart  time.Time // When recovery period started
-	lastFailure    time.Time // Time of most recent failure
+	failCount     int       // Number of consecutive failures
+	recovering    bool      // Whether engine is in recovery mode
+	recoveryStart time.Time // When recovery period started
+	lastFailure   time.Time // Time of most recent failure
 }
 
 // OrchestratorHealth tracks the health status of the orchestrator
