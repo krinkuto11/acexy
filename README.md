@@ -92,7 +92,7 @@ Open this URL in any media player that supports HTTP streaming (VLC, mpv, etc.).
 For backwards compatibility or simple setups, acexy can connect directly to a single AceStream engine:
 
 ```shell
-docker run --network host ghcr.io/krinkuto11/acexy
+docker run --network host ghcr.io/krinkuto11/acexy-orchestrator
 ```
 
 In this mode, orchestrator integration is disabled and acexy uses `ACEXY_HOST` and `ACEXY_PORT` configuration.
@@ -109,7 +109,7 @@ Docker automatically selects the correct image for your platform:
 
 ```shell
 # This command works on all supported architectures
-docker pull ghcr.io/krinkuto11/acexy:latest
+docker pull ghcr.io/krinkuto11/acexy-orchestrator:latest
 ```
 
 The multi-arch manifest ensures optimal performance by using native builds whenever possible, falling back to emulation only for ARMv7.
@@ -160,7 +160,7 @@ For complete list of options, run: `acexy -help`
 AceStream engine uses ports `8621/tcp` and `8621/udp` by default for P2P connections. Exposing these ports can improve streaming stability:
 
 ```shell
-docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy
+docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy-orchestrator
 ```
 
 ### Host Network Mode
@@ -168,7 +168,7 @@ docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy
 On Linux, using host networking mode allows AceStream to use UPnP IGD for NAT traversal without Docker's bridge networking limitations:
 
 ```shell
-docker run --network host ghcr.io/krinkuto11/acexy
+docker run --network host ghcr.io/krinkuto11/acexy-orchestrator
 ```
 
 Benefits:
