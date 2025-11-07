@@ -1,6 +1,6 @@
 services:
   acexy:
-    image: ghcr.io/javinator9889/acexy:0.2.0
+    image: ghcr.io/krinkuto11/acexy:0.2.0
     restart: unless-stopped
     ports:
       - 8080:8080/tcp
