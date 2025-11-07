@@ -15,6 +15,13 @@ import (
 	"time"
 )
 
+const (
+	// engineFailureThreshold is the number of consecutive failures before marking an engine as recovering
+	engineFailureThreshold = 5
+	// engineRecoveryPeriod is how long an engine stays in recovery mode (60 seconds)
+	engineRecoveryPeriod = 60 * time.Second
+)
+
 type orchClient struct {
 	base string
 	key  string
@@ -39,6 +46,17 @@ type orchClient struct {
 	engineCacheTime     time.Time
 	engineCacheDuration time.Duration
 	engineCacheMu       sync.RWMutex
+	// Engine error recovery tracking
+	engineErrors   map[string]*engineErrorState // containerID -> error tracking state
+	engineErrorsMu sync.RWMutex
+}
+
+// engineErrorState tracks error recovery state for an engine
+type engineErrorState struct {
+	failCount     int       // Number of consecutive failures
+	recovering    bool      // Whether engine is in recovery mode
+	recoveryStart time.Time // When recovery period started
+	lastFailure   time.Time // Time of most recent failure
 }
 
 // OrchestratorHealth tracks the health status of the orchestrator
@@ -119,6 +137,7 @@ func newOrchClient(base string) *orchClient {
 		pendingStreams:      make(map[string]int),
 		endedStreams:        make(map[string]bool),
 		engineCacheDuration: 2 * time.Second, // Cache engines for 2 seconds to reduce concurrent queries
+		engineErrors:        make(map[string]*engineErrorState),
 	}
 
 	// Start health monitoring in background
@@ -846,6 +865,87 @@ func (c *orchClient) ProvisionAcestream() (*aceProvisionResponse, error) {
 	}
 }
 
+// RecordEngineFailure records a stream failure for an engine and potentially marks it as recovering
+func (c *orchClient) RecordEngineFailure(containerID string) {
+	if c == nil || containerID == "" {
+		return
+	}
+
+	c.engineErrorsMu.Lock()
+	defer c.engineErrorsMu.Unlock()
+
+	// Get or create error state for this engine
+	state, exists := c.engineErrors[containerID]
+	if !exists {
+		state = &engineErrorState{}
+		c.engineErrors[containerID] = state
+	}
+
+	// Increment failure count
+	state.failCount++
+	state.lastFailure = time.Now()
+
+	slog.Debug("Recorded engine failure",
+		"container_id", containerID,
+		"fail_count", state.failCount,
+		"threshold", engineFailureThreshold)
+
+	// Check if we've reached the threshold
+	if state.failCount >= engineFailureThreshold && !state.recovering {
+		state.recovering = true
+		state.recoveryStart = time.Now()
+		slog.Warn("Engine marked as recovering from errors",
+			"container_id", containerID,
+			"fail_count", state.failCount,
+			"recovery_period", engineRecoveryPeriod)
+	}
+}
+
+// IsEngineRecovering checks if an engine is currently in recovery mode
+// If the recovery period has expired, it resets the error state and returns false
+func (c *orchClient) IsEngineRecovering(containerID string) bool {
+	if c == nil || containerID == "" {
+		return false
+	}
+
+	c.engineErrorsMu.Lock()
+	defer c.engineErrorsMu.Unlock()
+
+	state, exists := c.engineErrors[containerID]
+	if !exists || !state.recovering {
+		return false
+	}
+
+	// Check if recovery period has expired
+	if time.Since(state.recoveryStart) >= engineRecoveryPeriod {
+		// Recovery period complete, reset state
+		slog.Info("Engine recovery period complete, resetting error state",
+			"container_id", containerID,
+			"previous_fail_count", state.failCount)
+		delete(c.engineErrors, containerID)
+		return false
+	}
+
+	return true
+}
+
+// ResetEngineErrors manually resets the error state for an engine (e.g., after successful stream)
+func (c *orchClient) ResetEngineErrors(containerID string) {
+	if c == nil || containerID == "" {
+		return
+	}
+
+	c.engineErrorsMu.Lock()
+	defer c.engineErrorsMu.Unlock()
+
+	if state, exists := c.engineErrors[containerID]; exists {
+		slog.Debug("Resetting engine error state after successful stream",
+			"container_id", containerID,
+			"previous_fail_count", state.failCount)
+		delete(c.engineErrors, containerID)
+	}
+}
+
 // SelectBestEngine selects the best available engine based on load balancing rules
 // Returns host, port, containerID, and error. Prioritizes healthy engines first, then forwarded engines (faster),
 // then among engines with the same health status, forwarded status, and stream count, chooses the one with the
@@ -879,6 +979,12 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 
 	// Check stream count for each engine
 	for _, engine := range engines {
+		// Skip engines that are in recovery mode
+		if c.IsEngineRecovering(engine.ContainerID) {
+			slog.Debug("Skipping engine in recovery mode", "container_id", engine.ContainerID)
+			continue
+		}
+
 		streams, err := c.GetEngineStreams(engine.ContainerID)
 		if err != nil {
 			slog.Warn("Failed to get streams for engine", "container_id", engine.ContainerID, "error", err)
