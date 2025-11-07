@@ -35,7 +35,7 @@ Debug mode provides:
 ```yaml
 services:
   acexy-proxy:
-    image: ghcr.io/javinator9889/acexy:latest
+    image: ghcr.io/krinkuto11/acexy:latest
     environment:
       - DEBUG_MODE=true
       - DEBUG_LOG_DIR=/app/debug_logs
@@ -51,7 +51,7 @@ docker run -d \
   -e DEBUG_LOG_DIR=/app/debug_logs \
   -v ./proxy_debug_logs:/app/debug_logs \
   -p 8080:8080 \
-  ghcr.io/javinator9889/acexy:latest
+  ghcr.io/krinkuto11/acexy:latest
 ```
 
 ## Log Structure

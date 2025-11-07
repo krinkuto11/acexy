@@ -1,7 +1,7 @@
 # acexy
 
-[![Go Build](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml/badge.svg)](https://github.com/Javinator9889/acexy/actions/workflows/build.yaml)
-[![Docker Release](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml/badge.svg?event=release)](https://github.com/Javinator9889/acexy/actions/workflows/release.yaml)
+[![Go Build](https://github.com/krinkuto11/acexy/actions/workflows/build.yaml/badge.svg)](https://github.com/krinkuto11/acexy/actions/workflows/build.yaml)
+[![Docker Release](https://github.com/krinkuto11/acexy/actions/workflows/release.yaml/badge.svg?event=release)](https://github.com/krinkuto11/acexy/actions/workflows/release.yaml)
 
 A high-performance AceStream proxy with orchestrator-based engine management for dynamic load balancing and automatic provisioning.
 
@@ -63,7 +63,7 @@ Acexy addresses these limitations by:
 The recommended deployment uses Docker Compose to run acexy with orchestrator integration:
 
 ```shell
-wget https://raw.githubusercontent.com/Javinator9889/acexy/refs/heads/main/docker-compose.yml
+wget https://raw.githubusercontent.com/krinkuto11/acexy/refs/heads/main/docker-compose.yml
 docker compose up -d
 ```
 
@@ -92,7 +92,7 @@ Open this URL in any media player that supports HTTP streaming (VLC, mpv, etc.).
 For backwards compatibility or simple setups, acexy can connect directly to a single AceStream engine:
 
 ```shell
-docker run --network host ghcr.io/javinator9889/acexy
+docker run --network host ghcr.io/krinkuto11/acexy
 ```
 
 In this mode, orchestrator integration is disabled and acexy uses `ACEXY_HOST` and `ACEXY_PORT` configuration.
@@ -109,7 +109,7 @@ Docker automatically selects the correct image for your platform:
 
 ```shell
 # This command works on all supported architectures
-docker pull ghcr.io/javinator9889/acexy:latest
+docker pull ghcr.io/krinkuto11/acexy:latest
 ```
 
 The multi-arch manifest ensures optimal performance by using native builds whenever possible, falling back to emulation only for ARMv7.
@@ -160,7 +160,7 @@ For complete list of options, run: `acexy -help`
 AceStream engine uses ports `8621/tcp` and `8621/udp` by default for P2P connections. Exposing these ports can improve streaming stability:
 
 ```shell
-docker run -p 8080:8080 -p 8621:8621 ghcr.io/javinator9889/acexy
+docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy
 ```
 
 ### Host Network Mode
@@ -168,7 +168,7 @@ docker run -p 8080:8080 -p 8621:8621 ghcr.io/javinator9889/acexy
 On Linux, using host networking mode allows AceStream to use UPnP IGD for NAT traversal without Docker's bridge networking limitations:
 
 ```shell
-docker run --network host ghcr.io/javinator9889/acexy
+docker run --network host ghcr.io/krinkuto11/acexy
 ```
 
 Benefits:
