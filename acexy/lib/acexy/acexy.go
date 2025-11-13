@@ -161,22 +161,18 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 		// Verify that the existing stream is still valid by checking if it has a valid player connection
 		// or if it's in a clean state (no clients and no active player)
 		if stream.player == nil && stream.clients == 0 {
-			// Check if stream is stale (older than 10 minutes with no activity)
-			if time.Since(stream.createdAt) > 10*time.Minute {
-				slog.Debug("Cleaning up stale stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
-				delete(a.streams, aceId)
-				// Close the done channel if not already closed
-				select {
-				case <-stream.done:
-					// Already closed
-				default:
-					close(stream.done)
-				}
-				// Continue to create a new stream
-			} else {
-				slog.Info("Reusing existing idle stream", "stream", aceId, "clients", stream.clients)
-				return stream.stream, nil
+			// If stream has no clients and no player, it's in a broken or idle state
+			// Clean it up immediately to avoid reusing a failed stream
+			slog.Debug("Cleaning up idle/broken stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
+			delete(a.streams, aceId)
+			// Close the done channel if not already closed
+			select {
+			case <-stream.done:
+				// Already closed
+			default:
+				close(stream.done)
 			}
+			// Continue to create a new stream
 		} else {
 			slog.Info("Reusing existing active stream", "stream", aceId, "clients", stream.clients)
 			return stream.stream, nil
