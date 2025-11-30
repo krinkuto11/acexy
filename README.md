@@ -87,6 +87,32 @@ http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
 
 Open this URL in any media player that supports HTTP streaming (VLC, mpv, etc.).
 
+### Active Streams API
+
+Acexy exposes an endpoint to query currently active streams. This is useful for the orchestrator to identify hanging streams that can be cleaned up from AceStream engines:
+
+```
+GET http://127.0.0.1:8080/ace/streams
+```
+
+Response example:
+```json
+{
+  "total_streams": 2,
+  "streams": [
+    {
+      "id": "{id: abc123}",
+      "playback_url": "http://localhost:6878/ace/stream/...",
+      "stat_url": "http://localhost:6878/ace/stat/...",
+      "command_url": "http://localhost:6878/ace/cmd/...",
+      "clients": 1,
+      "created_at": "2024-01-01T12:00:00Z",
+      "has_player": true
+    }
+  ]
+}
+```
+
 ### Single Engine Mode
 
 For backwards compatibility or simple setups, acexy can connect directly to a single AceStream engine:

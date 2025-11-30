@@ -31,7 +31,6 @@ func TestCanProvision(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Set health to allow provisioning
@@ -87,7 +86,6 @@ func TestUpdateHealth(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Update health
@@ -149,7 +147,6 @@ func TestProvisionWithRetry(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Should succeed after retry
@@ -187,7 +184,6 @@ func TestProvisionWithRetryPermanentFailure(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Should fail immediately without retries
@@ -222,7 +218,6 @@ func TestSelectBestEngineProvisioningBlocked(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Block provisioning

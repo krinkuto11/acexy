@@ -10,10 +10,11 @@ import (
 	"time"
 )
 
-// TestPendingStreamTracking verifies that the pending stream tracking
-// prevents the race condition where multiple concurrent requests select
-// the same engine before the orchestrator is updated.
-func TestPendingStreamTracking(t *testing.T) {
+// TestConcurrentEngineSelection verifies that concurrent requests
+// can select engines without blocking. Without the pending stream tracking,
+// multiple concurrent requests may select the same engine until the
+// orchestrator's stream state is updated.
+func TestConcurrentEngineSelection(t *testing.T) {
 	// Track how many times the same engine gets selected
 	selectionCount := make(map[string]int)
 	var selectionMu sync.Mutex
@@ -57,12 +58,12 @@ func TestPendingStreamTracking(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
-	// Simulate 5 concurrent requests trying to select an engine
-	// Without pending stream tracking, all 5 would select the same engine
-	// With pending stream tracking, only 2 should select it (the max)
+	// Simulate concurrent requests trying to select an engine
+	// Without pending stream tracking, requests won't block and
+	// multiple requests can select the same engine based on
+	// orchestrator's reported stream state
 	numRequests := 5
 	var wg sync.WaitGroup
 	wg.Add(numRequests)
@@ -84,79 +85,86 @@ func TestPendingStreamTracking(t *testing.T) {
 
 	wg.Wait()
 
-	// Verify that the engine was selected at most maxStreamsPerEngine times
+	// Verify that requests completed without deadlock
 	selectionMu.Lock()
 	defer selectionMu.Unlock()
 
+	totalSelections := 0
 	for engineID, count := range selectionCount {
-		if count > client.maxStreamsPerEngine {
-			t.Errorf("Engine %s was selected %d times, but max is %d",
-				engineID, count, client.maxStreamsPerEngine)
-		} else {
-			t.Logf("Engine %s was correctly selected %d times (max=%d)",
-				engineID, count, client.maxStreamsPerEngine)
-		}
+		totalSelections += count
+		t.Logf("Engine %s was selected %d times", engineID, count)
 	}
 
-	// Verify pending streams were tracked
-	client.pendingStreamsMu.Lock()
-	pendingCount := client.pendingStreams["test-engine-1"]
-	client.pendingStreamsMu.Unlock()
-
-	t.Logf("Final pending stream count: %d", pendingCount)
-	if pendingCount != client.maxStreamsPerEngine {
-		t.Errorf("Expected pending count to be %d, got %d", client.maxStreamsPerEngine, pendingCount)
+	// Without blocking, the orchestrator's stream state controls capacity
+	// Since mock returns empty streams, all requests should select the engine
+	// up to max capacity, then provisioning kicks in
+	if totalSelections == 0 {
+		t.Error("Expected at least one successful selection")
 	}
+	t.Logf("Total selections: %d", totalSelections)
 }
 
-// TestPendingStreamRelease verifies that pending streams are released
-// after EmitStarted is called.
-func TestPendingStreamRelease(t *testing.T) {
+// TestEngineSelectionWithoutBlocking verifies that engine selection
+// does not block and relies on orchestrator's stream state for capacity
+func TestEngineSelectionWithoutBlocking(t *testing.T) {
+	// Track timing to ensure no blocking
+	startTime := time.Now()
+
+	// Create a mock orchestrator server with slight delay
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/engines" {
+			engines := []engineState{
+				{
+					ContainerID:     "test-engine-1",
+					ContainerName:   "test-1",
+					Host:            "localhost",
+					Port:            19000,
+					HealthStatus:    "healthy",
+					LastHealthCheck: time.Now(),
+					LastStreamUsage: time.Now().Add(-10 * time.Minute),
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(engines)
+			return
+		}
+		if r.URL.Path == "/streams" {
+			// Return empty streams - engine has capacity
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]streamState{})
+			return
+		}
+		t.Errorf("Unexpected request to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	client := &orchClient{
-		base:                "http://test",
+		base:                server.URL,
 		maxStreamsPerEngine: 2,
 		hc:                  &http.Client{Timeout: 3 * time.Second},
-		pendingStreams:      make(map[string]int),
+		ctx:                 ctx,
+		cancel:              cancel,
 	}
 
-	// Manually set a pending stream
-	engineID := "test-engine-1"
-	client.pendingStreamsMu.Lock()
-	client.pendingStreams[engineID] = 2
-	client.pendingStreamsMu.Unlock()
-
-	// Verify it's set
-	client.pendingStreamsMu.Lock()
-	count := client.pendingStreams[engineID]
-	client.pendingStreamsMu.Unlock()
-	if count != 2 {
-		t.Errorf("Expected pending count to be 2, got %d", count)
+	// Make multiple sequential selections
+	for i := 0; i < 3; i++ {
+		host, port, containerID, err := client.SelectBestEngine()
+		if err != nil {
+			t.Logf("Selection %d failed: %v", i, err)
+			continue
+		}
+		t.Logf("Selection %d: host=%s port=%d containerID=%s", i, host, port, containerID)
 	}
 
-	// Release one stream
-	client.ReleasePendingStream(engineID)
+	duration := time.Since(startTime)
+	t.Logf("Total time for 3 selections: %v", duration)
 
-	// Verify count decreased
-	client.pendingStreamsMu.Lock()
-	count = client.pendingStreams[engineID]
-	client.pendingStreamsMu.Unlock()
-	if count != 1 {
-		t.Errorf("Expected pending count to be 1 after release, got %d", count)
+	// Without blocking, selections should be fast (under 1 second for mock server)
+	if duration > 5*time.Second {
+		t.Errorf("Expected selections to complete quickly, but took %v", duration)
 	}
-
-	// Release another
-	client.ReleasePendingStream(engineID)
-
-	// Verify map entry is cleaned up when count reaches 0
-	client.pendingStreamsMu.Lock()
-	_, exists := client.pendingStreams[engineID]
-	client.pendingStreamsMu.Unlock()
-	if exists {
-		t.Error("Expected pending streams map entry to be cleaned up when count reaches 0")
-	}
-
-	// Verify releasing when already at 0 doesn't cause issues
-	client.ReleasePendingStream(engineID)
-
-	t.Log("Pending stream release working correctly")
 }
+

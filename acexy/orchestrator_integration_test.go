@@ -386,7 +386,6 @@ func TestSelectBestEngine_StructuredError(t *testing.T) {
 		hc:             &http.Client{Timeout: 3 * time.Second},
 		ctx:            ctx,
 		cancel:         cancel,
-		pendingStreams: make(map[string]int),
 	}
 
 	// Update health first

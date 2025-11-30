@@ -500,6 +500,41 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 	return AcexyStatus{}, fmt.Errorf(`stream "%s" not found`, id)
 }
 
+// ActiveStreamInfo represents information about an active stream
+// that can be exposed via the API
+type ActiveStreamInfo struct {
+	ID          string    `json:"id"`
+	PlaybackURL string    `json:"playback_url"`
+	StatURL     string    `json:"stat_url"`
+	CommandURL  string    `json:"command_url"`
+	Clients     uint      `json:"clients"`
+	CreatedAt   time.Time `json:"created_at"`
+	HasPlayer   bool      `json:"has_player"`
+}
+
+// GetActiveStreams returns information about all currently active streams.
+// This is useful for the orchestrator to query which streams are really
+// being used, allowing detection and cleanup of hanging streams.
+func (a *Acexy) GetActiveStreams() []ActiveStreamInfo {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	activeStreams := make([]ActiveStreamInfo, 0, len(a.streams))
+	for aceId, stream := range a.streams {
+		activeStreams = append(activeStreams, ActiveStreamInfo{
+			ID:          aceId.String(),
+			PlaybackURL: stream.stream.PlaybackURL,
+			StatURL:     stream.stream.StatURL,
+			CommandURL:  stream.stream.CommandURL,
+			Clients:     stream.clients,
+			CreatedAt:   stream.createdAt,
+			HasPlayer:   stream.player != nil,
+		})
+	}
+
+	return activeStreams
+}
+
 // Creates a timeout channel that will be closed after the given timeout
 func SetTimeout(timeout time.Duration) chan struct{} {
 	// Create a channel that will be closed after the given timeout

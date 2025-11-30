@@ -99,7 +99,6 @@ func TestE2E_VPNRecovery(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	// Initial health check
@@ -227,7 +226,6 @@ func TestE2E_CircuitBreakerRecovery(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	client.updateHealth()
@@ -329,7 +327,6 @@ func TestE2E_CapacityAvailable(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 	}
 
 	client.updateHealth()
