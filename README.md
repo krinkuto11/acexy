@@ -107,11 +107,16 @@ Response example:
       "command_url": "http://localhost:6878/ace/cmd/...",
       "clients": 1,
       "created_at": "2024-01-01T12:00:00Z",
-      "has_player": true
+      "has_player": true,
+      "engine_host": "localhost",
+      "engine_port": 19000,
+      "engine_container_id": "abc123def456"
     }
   ]
 }
 ```
+
+When using the orchestrator, each stream includes `engine_host`, `engine_port`, and `engine_container_id` fields identifying which AceStream engine is serving the stream. These fields are omitted when not using the orchestrator or when the engine info is not available.
 
 ### Single Engine Mode
 

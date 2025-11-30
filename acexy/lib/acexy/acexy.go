@@ -70,6 +70,10 @@ type ongoingStream struct {
 	copier    *Copier
 	writers   *pmw.PMultiWriter
 	createdAt time.Time // Track when the stream was created
+	// Engine information (set when using orchestrator)
+	engineHost        string
+	enginePort        int
+	engineContainerID string
 }
 
 // Structure referencing the AceStream Proxy - this is, ourselves
@@ -503,13 +507,16 @@ func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
 // ActiveStreamInfo represents information about an active stream
 // that can be exposed via the API
 type ActiveStreamInfo struct {
-	ID          string    `json:"id"`
-	PlaybackURL string    `json:"playback_url"`
-	StatURL     string    `json:"stat_url"`
-	CommandURL  string    `json:"command_url"`
-	Clients     uint      `json:"clients"`
-	CreatedAt   time.Time `json:"created_at"`
-	HasPlayer   bool      `json:"has_player"`
+	ID                string    `json:"id"`
+	PlaybackURL       string    `json:"playback_url"`
+	StatURL           string    `json:"stat_url"`
+	CommandURL        string    `json:"command_url"`
+	Clients           uint      `json:"clients"`
+	CreatedAt         time.Time `json:"created_at"`
+	HasPlayer         bool      `json:"has_player"`
+	EngineHost        string    `json:"engine_host,omitempty"`
+	EnginePort        int       `json:"engine_port,omitempty"`
+	EngineContainerID string    `json:"engine_container_id,omitempty"`
 }
 
 // GetActiveStreams returns information about all currently active streams.
@@ -522,17 +529,36 @@ func (a *Acexy) GetActiveStreams() []ActiveStreamInfo {
 	activeStreams := make([]ActiveStreamInfo, 0, len(a.streams))
 	for aceId, stream := range a.streams {
 		activeStreams = append(activeStreams, ActiveStreamInfo{
-			ID:          aceId.String(),
-			PlaybackURL: stream.stream.PlaybackURL,
-			StatURL:     stream.stream.StatURL,
-			CommandURL:  stream.stream.CommandURL,
-			Clients:     stream.clients,
-			CreatedAt:   stream.createdAt,
-			HasPlayer:   stream.player != nil,
+			ID:                aceId.String(),
+			PlaybackURL:       stream.stream.PlaybackURL,
+			StatURL:           stream.stream.StatURL,
+			CommandURL:        stream.stream.CommandURL,
+			Clients:           stream.clients,
+			CreatedAt:         stream.createdAt,
+			HasPlayer:         stream.player != nil,
+			EngineHost:        stream.engineHost,
+			EnginePort:        stream.enginePort,
+			EngineContainerID: stream.engineContainerID,
 		})
 	}
 
 	return activeStreams
+}
+
+// SetStreamEngineInfo sets the engine information for a stream.
+// This is called by the proxy when using orchestrator to track which engine is serving the stream.
+func (a *Acexy) SetStreamEngineInfo(aceId AceID, host string, port int, containerID string) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	if stream, ok := a.streams[aceId]; ok {
+		stream.engineHost = host
+		stream.enginePort = port
+		stream.engineContainerID = containerID
+		slog.Debug("Set engine info for stream", "stream", aceId, "host", host, "port", port, "container_id", containerID)
+	} else {
+		slog.Warn("Cannot set engine info for non-existent stream", "stream", aceId)
+	}
 }
 
 // Creates a timeout channel that will be closed after the given timeout

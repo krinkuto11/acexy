@@ -218,6 +218,9 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set engine info on the stream for the /ace/streams API
+	p.Acexy.SetStreamEngineInfo(aceId, selectedHost, selectedPort, selectedEngineContainerID)
+
 	// Prepare orchestrator event data early
 	var orchEventData struct {
 		streamID   string
