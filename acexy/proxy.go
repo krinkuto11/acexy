@@ -397,10 +397,12 @@ func (p *Proxy) HandleActiveStreams(w http.ResponseWriter, r *http.Request) {
 	streams := p.Acexy.GetActiveStreams()
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"total_streams": len(streams),
 		"streams":       streams,
-	})
+	}); err != nil {
+		slog.Error("Failed to encode active streams response", "error", err)
+	}
 }
 
 func (s *Size) Set(value string) error {
