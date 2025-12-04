@@ -38,7 +38,6 @@ func TestEmitEndedIdempotency(t *testing.T) {
 		ctx:            ctx,
 		cancel:         cancel,
 		endedStreams:   make(map[string]bool),
-		pendingStreams: make(map[string]int),
 	}
 
 	streamID := "test-stream-123"
@@ -119,7 +118,6 @@ func TestEngineListCaching(t *testing.T) {
 		ctx:                 ctx,
 		cancel:              cancel,
 		engineCacheDuration: 2 * time.Second,
-		pendingStreams:      make(map[string]int),
 		endedStreams:        make(map[string]bool),
 	}
 
@@ -204,7 +202,6 @@ func TestEventOrdering(t *testing.T) {
 		ctx:            ctx,
 		cancel:         cancel,
 		endedStreams:   make(map[string]bool),
-		pendingStreams: make(map[string]int),
 	}
 
 	streamID := "test-stream-123"
@@ -249,7 +246,6 @@ func TestCleanupMonitor(t *testing.T) {
 		ctx:                 ctx,
 		cancel:              cancel,
 		endedStreams:        make(map[string]bool),
-		pendingStreams:      make(map[string]int),
 		engineCacheDuration: 2 * time.Second,
 	}
 
@@ -284,7 +280,6 @@ func TestEmitEndedWithEmptyStreamID(t *testing.T) {
 		ctx:            ctx,
 		cancel:         cancel,
 		endedStreams:   make(map[string]bool),
-		pendingStreams: make(map[string]int),
 	}
 
 	// Should not panic or cause issues

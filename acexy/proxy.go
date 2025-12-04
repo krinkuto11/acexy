@@ -62,6 +62,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.HandleStream(w, r)
 	case APIv1_URL + "/status":
 		p.HandleStatus(w, r)
+	case APIv1_URL + "/streams":
+		p.HandleActiveStreams(w, r)
 	case "/":
 		_, _ = fmt.Fprintln(w, LICENSE)
 	default:
@@ -215,6 +217,9 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	// Set engine info on the stream for the /ace/streams API
+	p.Acexy.SetStreamEngineInfo(aceId, selectedHost, selectedPort, selectedEngineContainerID)
 
 	// Prepare orchestrator event data early
 	var orchEventData struct {
@@ -380,6 +385,29 @@ func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleActiveStreams returns information about all currently active streams
+// This endpoint can be used by the orchestrator to query which streams are really
+// being used, allowing it to identify and remove hanging streams from AceStream engines.
+func (p *Proxy) HandleActiveStreams(w http.ResponseWriter, r *http.Request) {
+	// Verify the request method
+	if r.Method != http.MethodGet {
+		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get all active streams from Acexy
+	streams := p.Acexy.GetActiveStreams()
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"total_streams": len(streams),
+		"streams":       streams,
+	}); err != nil {
+		slog.Error("Failed to encode active streams response", "error", err)
+	}
+}
+
 func (s *Size) Set(value string) error {
 	size, err := humanize.ParseBytes(value)
 	if err != nil {
@@ -527,6 +555,7 @@ func main() {
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
 	mux.Handle(APIv1_URL+"/status", proxy)
+	mux.Handle(APIv1_URL+"/streams", proxy)
 	mux.Handle("/", proxy) // Let proxy handle all other requests including root
 
 	// Start the HTTP server

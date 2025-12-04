@@ -35,9 +35,6 @@ type orchClient struct {
 	// Context for background tasks
 	ctx    context.Context
 	cancel context.CancelFunc
-	// Pending streams tracker to avoid race conditions
-	pendingStreams   map[string]int // containerID -> count of streams being allocated
-	pendingStreamsMu sync.Mutex
 	// Track streams that have already had EmitEnded called to prevent duplicates
 	endedStreams   map[string]bool
 	endedStreamsMu sync.Mutex
@@ -134,7 +131,6 @@ func newOrchClient(base string) *orchClient {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 		endedStreams:        make(map[string]bool),
 		engineCacheDuration: 2 * time.Second, // Cache engines for 2 seconds to reduce concurrent queries
 		engineErrors:        make(map[string]*engineErrorState),
@@ -190,13 +186,6 @@ func (c *orchClient) cleanupStaleData() {
 		c.endedStreams = make(map[string]bool)
 	}
 	c.endedStreamsMu.Unlock()
-
-	// Log any pending streams that might be stuck
-	c.pendingStreamsMu.Lock()
-	if len(c.pendingStreams) > 0 {
-		slog.Warn("Pending streams still tracked", "count", len(c.pendingStreams), "engines", c.pendingStreams)
-	}
-	c.pendingStreamsMu.Unlock()
 }
 
 // SetMaxStreamsPerEngine sets the maximum streams per engine configuration
@@ -534,25 +523,6 @@ func (c *orchClient) postSync(path string, body any) {
 	}
 }
 
-// ReleasePendingStream decrements the pending stream count for an engine
-// This should be called after a stream has been reported to the orchestrator or on failure
-func (c *orchClient) ReleasePendingStream(engineContainerID string) {
-	if c == nil || engineContainerID == "" {
-		return
-	}
-
-	c.pendingStreamsMu.Lock()
-	defer c.pendingStreamsMu.Unlock()
-
-	if count, exists := c.pendingStreams[engineContainerID]; exists && count > 0 {
-		c.pendingStreams[engineContainerID]--
-		if c.pendingStreams[engineContainerID] == 0 {
-			delete(c.pendingStreams, engineContainerID)
-		}
-		slog.Debug("Released pending stream allocation", "engine_container_id", engineContainerID, "remaining_pending", c.pendingStreams[engineContainerID])
-	}
-}
-
 func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID, statURL, cmdURL, streamID, engineContainerID string) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
@@ -585,9 +555,6 @@ func (c *orchClient) EmitStarted(host string, port int, keyType, key, playbackID
 		"key":         key,
 		"playback_id": playbackID,
 	})
-
-	// Release the pending stream allocation after reporting to orchestrator
-	c.ReleasePendingStream(engineContainerID)
 }
 
 func (c *orchClient) EmitEnded(streamID, reason string) {
@@ -949,8 +916,7 @@ func (c *orchClient) ResetEngineErrors(containerID string) {
 // SelectBestEngine selects the best available engine based on load balancing rules
 // Returns host, port, containerID, and error. Prioritizes healthy engines first, then forwarded engines (faster),
 // then among engines with the same health status, forwarded status, and stream count, chooses the one with the
-// oldest last_stream_usage timestamp. The containerID is used internally to track pending stream allocations
-// and prevent race conditions.
+// oldest last_stream_usage timestamp.
 func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	debugLog := debug.GetDebugLogger()
 	startTime := time.Now()
@@ -998,20 +964,13 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 			}
 		}
 
-		// Add pending streams to get total load
-		c.pendingStreamsMu.Lock()
-		pendingCount := c.pendingStreams[engine.ContainerID]
-		c.pendingStreamsMu.Unlock()
+		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "host", engine.Host, "port", engine.Port, "forwarded", engine.Forwarded, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
 
-		totalStreams := activeStreams + pendingCount
-
-		slog.Debug("Engine stream count", "container_id", engine.ContainerID, "active_streams", activeStreams, "pending_streams", pendingCount, "total_streams", totalStreams, "host", engine.Host, "port", engine.Port, "forwarded", engine.Forwarded, "max_allowed", c.maxStreamsPerEngine, "health_status", engine.HealthStatus, "last_health_check", engine.LastHealthCheck.Format(time.RFC3339), "last_stream_usage", engine.LastStreamUsage.Format(time.RFC3339))
-
-		// Only consider engines that have capacity (including pending allocations)
-		if totalStreams < c.maxStreamsPerEngine {
+		// Only consider engines that have capacity
+		if activeStreams < c.maxStreamsPerEngine {
 			availableEngines = append(availableEngines, engineWithLoad{
 				engine:        engine,
-				activeStreams: totalStreams,
+				activeStreams: activeStreams,
 			})
 		}
 	}
@@ -1045,11 +1004,6 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 		if err != nil {
 			return "", 0, "", err
 		}
-
-		// Increment pending streams for the new engine
-		c.pendingStreamsMu.Lock()
-		c.pendingStreams[provResp.ContainerID]++
-		c.pendingStreamsMu.Unlock()
 
 		// Shorter wait since orchestrator now syncs state immediately
 		time.Sleep(5 * time.Second)
@@ -1125,11 +1079,6 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	host := bestEngine.engine.Host
 	port := bestEngine.engine.Port
 	containerID := bestEngine.engine.ContainerID
-
-	// Increment pending streams counter to prevent race conditions
-	c.pendingStreamsMu.Lock()
-	c.pendingStreams[containerID]++
-	c.pendingStreamsMu.Unlock()
 
 	slog.Info("Selected best available engine",
 		"container_id", containerID,

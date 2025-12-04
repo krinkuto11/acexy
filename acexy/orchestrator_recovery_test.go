@@ -205,7 +205,6 @@ func TestSelectBestEngine_SkipsRecovering(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 		engineErrors:        make(map[string]*engineErrorState),
 	}
 
@@ -314,7 +313,6 @@ func TestSelectBestEngine_AllRecovering(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
-		pendingStreams:      make(map[string]int),
 		engineErrors:        make(map[string]*engineErrorState),
 	}
 
