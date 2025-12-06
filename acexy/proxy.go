@@ -484,11 +484,29 @@ func playbackIDFromStat(statURL string) string {
 		return ""
 	}
 
+	// Validate the URL is parseable (basic check)
+	if !strings.Contains(statURL, "/") {
+		slog.Debug("Invalid stat URL format", "url", statURL)
+		return ""
+	}
+
 	// Parse URL to extract path components
 	// Expected format: .../ace/stat/<infohash>/<playback_session_id>
-	parts := strings.Split(strings.Trim(statURL, "/"), "/")
+	// We use simple string splitting for efficiency, but validate structure
+	urlPath := statURL
+	if idx := strings.Index(statURL, "://"); idx >= 0 {
+		// Remove scheme (http:// or https://)
+		urlPath = statURL[idx+3:]
+	}
+	if idx := strings.Index(urlPath, "/"); idx >= 0 {
+		// Remove host/port, keep only path
+		urlPath = urlPath[idx:]
+	}
+	
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 	
 	// Find the "stat" segment and return the ID after it
+	// Expected: [..., "ace", "stat", <infohash>, <playback_session_id>]
 	for i, part := range parts {
 		if part == "stat" && i+2 < len(parts) {
 			return parts[i+2] // Return playback_session_id
@@ -496,9 +514,11 @@ func playbackIDFromStat(statURL string) string {
 	}
 	
 	// Fallback: return last path component if structure is different
-	if len(parts) > 0 {
+	if len(parts) > 0 && parts[len(parts)-1] != "" {
+		slog.Debug("Using fallback playback ID extraction", "url", statURL, "id", parts[len(parts)-1])
 		return parts[len(parts)-1]
 	}
 	
+	slog.Warn("Could not extract playback ID from stat URL", "url", statURL)
 	return ""
 }
