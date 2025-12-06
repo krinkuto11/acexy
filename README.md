@@ -40,21 +40,34 @@ When orchestrator is unavailable or not configured, acexy automatically falls ba
 
 ## Architecture
 
-Acexy acts as a wrapper around the [AceStream middleware HTTP API](https://docs.acestream.net/developers/start-playback/#using-middleware), supporting both HLS and MPEG-TS playback with the following topology:
+Acexy is an **orchestrator-first stateless proxy** that wraps the [AceStream middleware HTTP API](https://docs.acestream.net/developers/start-playback/#using-middleware), supporting both HLS and MPEG-TS playback.
 
-![acexy Topology](doc/img/acexy.svg)
+### Key Design Principles
 
-Without acexy, AceStream has limitations:
-- Only one client per stream (requires manual PID assignment for multiple clients)
-- No stream multiplexing capability
-- Limited error resilience
-- Resource inefficiency with multiple client instances
+1. **Stateless Proxy**: Each request is independent with its own unique PID
+2. **Orchestrator-First**: Smart engine selection and dynamic provisioning
+3. **High Concurrency**: Optimized for handling many simultaneous streams
+4. **No Multiplexing**: Simplified architecture - let external proxies handle multiple clients
 
-Acexy addresses these limitations by:
-- Automatic PID assignment per client per stream
-- Stream multiplexing across multiple clients
-- Orchestrator-based engine management
-- Improved error handling and resilience
+### How It Works
+
+1. **Client Request**: Client requests a stream via `/ace/getstream?id=<stream-id>`
+2. **Engine Selection**: Orchestrator selects the best available engine based on:
+   - Current load (streams per engine)
+   - Engine health status
+   - VPN forwarding status (prioritized for better performance)
+   - Last stream usage (distributes load evenly)
+3. **Stream Setup**: Proxy requests stream from selected engine with unique PID
+4. **Streaming**: Proxy forwards stream data directly to client (stateless passthrough)
+5. **Tracking**: Orchestrator tracks stream lifecycle for monitoring and cleanup
+
+### Benefits Over Direct AceStream Access
+
+- **Dynamic Scaling**: Automatic engine provisioning when capacity is reached
+- **Intelligent Load Balancing**: Distributes streams across healthy engines
+- **High Availability**: Automatic failover and health monitoring
+- **Simplified Client Integration**: Single endpoint for all streams
+- **Performance Optimization**: Prioritizes faster engines (VPN-forwarded)
 
 ## Quick Start
 
@@ -87,36 +100,7 @@ http://127.0.0.1:8080/ace/getstream?id=dd1e67078381739d14beca697356ab76d49d1a2
 
 Open this URL in any media player that supports HTTP streaming (VLC, mpv, etc.).
 
-### Active Streams API
-
-Acexy exposes an endpoint to query currently active streams. This is useful for the orchestrator to identify hanging streams that can be cleaned up from AceStream engines:
-
-```
-GET http://127.0.0.1:8080/ace/streams
-```
-
-Response example:
-```json
-{
-  "total_streams": 2,
-  "streams": [
-    {
-      "id": "{id: abc123}",
-      "playback_url": "http://localhost:6878/ace/stream/...",
-      "stat_url": "http://localhost:6878/ace/stat/...",
-      "command_url": "http://localhost:6878/ace/cmd/...",
-      "clients": 1,
-      "created_at": "2024-01-01T12:00:00Z",
-      "has_player": true,
-      "engine_host": "localhost",
-      "engine_port": 19000,
-      "engine_container_id": "abc123def456"
-    }
-  ]
-}
-```
-
-When using the orchestrator, each stream includes `engine_host`, `engine_port`, and `engine_container_id` fields identifying which AceStream engine is serving the stream. These fields are omitted when not using the orchestrator or when the engine info is not available.
+Each request gets its own stream instance with a unique PID, ensuring no conflicts between clients.
 
 ### Single Engine Mode
 

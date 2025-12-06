@@ -200,6 +200,20 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Emit stream started event to orchestrator for internal tracking
+	if p.Orch != nil {
+		idType, key := aceId.ID()
+		playbackID := playbackIDFromStat(stream.StatURL)
+		streamID := key + "|" + playbackID
+		orchKeyType := mapAceIDTypeToOrchestrator(idType)
+		
+		slog.Debug("Emitting stream_started event to orchestrator",
+			"stream_id", streamID, "host", selectedHost, "port", selectedPort)
+		
+		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
+			playbackID, stream.StatURL, stream.CommandURL, streamID, selectedEngineContainerID)
+	}
+
 	// Set response headers
 	switch p.Acexy.Endpoint {
 	case acexy.M3U8_ENDPOINT:
@@ -449,4 +463,42 @@ func main() {
 		slog.Error("Failed to start server", "error", err)
 		os.Exit(1)
 	}
+}
+
+// mapAceIDTypeToOrchestrator maps acexy ID types to orchestrator expected types
+func mapAceIDTypeToOrchestrator(aceType acexy.AceIDType) string {
+	switch aceType {
+	case "infohash":
+		return "infohash"
+	case "id":
+		// In AceStream context, "id" typically refers to content_id
+		return "content_id"
+	default:
+		return "content_id" // default fallback
+	}
+}
+
+// playbackIDFromStat extracts the playback session ID from a stat URL
+func playbackIDFromStat(statURL string) string {
+	if statURL == "" {
+		return ""
+	}
+
+	// Parse URL to extract path components
+	// Expected format: .../ace/stat/<infohash>/<playback_session_id>
+	parts := strings.Split(strings.Trim(statURL, "/"), "/")
+	
+	// Find the "stat" segment and return the ID after it
+	for i, part := range parts {
+		if part == "stat" && i+2 < len(parts) {
+			return parts[i+2] // Return playback_session_id
+		}
+	}
+	
+	// Fallback: return last path component if structure is different
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	
+	return ""
 }
