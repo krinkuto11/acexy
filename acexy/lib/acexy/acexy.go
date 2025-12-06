@@ -70,6 +70,7 @@ type ongoingStream struct {
 	copier    *Copier
 	writers   *pmw.PMultiWriter
 	createdAt time.Time // Track when the stream was created
+	failed    bool      // Track if the stream has failed during initialization
 	// Engine information (set when using orchestrator)
 	engineHost        string
 	enginePort        int
@@ -162,9 +163,19 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 
 	// Check if the stream is already enqueued
 	if stream, ok := a.streams[aceId]; ok {
-		// Verify that the existing stream is still valid by checking if it has a valid player connection
-		// or if it's in a clean state (no clients and no active player)
-		if stream.player == nil && stream.clients == 0 {
+		// If stream has failed during initialization, clean it up immediately
+		if stream.failed {
+			slog.Debug("Cleaning up failed stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
+			delete(a.streams, aceId)
+			// Close the done channel if not already closed
+			select {
+			case <-stream.done:
+				// Already closed
+			default:
+				close(stream.done)
+			}
+			// Continue to create a new stream
+		} else if stream.player == nil && stream.clients == 0 {
 			// If stream has no clients and no player, it's in a broken or idle state
 			// Clean it up immediately to avoid reusing a failed stream
 			slog.Debug("Cleaning up idle/broken stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
@@ -224,6 +235,12 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 		return fmt.Errorf(`stream "%s" not found`, stream.ID)
 	}
 
+	// Check if the stream has already failed
+	if ongoingStream.failed {
+		slog.Debug("Stream has failed, cannot start", "stream", stream.ID)
+		return fmt.Errorf(`stream "%s" has failed`, stream.ID)
+	}
+
 	// Add the writer to the list of writers
 	ongoingStream.writers.Add(out)
 
@@ -238,13 +255,17 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to forward stream", "error", err)
+		// Mark the stream as failed so it won't be reused
+		ongoingStream.failed = true
 		// Remove the writer that was just added since we're failing
 		ongoingStream.writers.Remove(out)
 		ongoingStream.clients--
-		if ongoingStream.clients == 0 {
-			if releaseErr := a.releaseStream(stream); releaseErr != nil {
-				slog.Warn("Error releasing stream", "error", releaseErr)
-			}
+		// Always try to release the stream on failure, even if clients > 0
+		// This ensures we don't leave broken streams in the map
+		if releaseErr := a.releaseStream(stream); releaseErr != nil {
+			slog.Debug("Error releasing failed stream", "error", releaseErr)
+			// Even if release fails, ensure the stream is removed from the map
+			delete(a.streams, stream.ID)
 		}
 		return err
 	}
@@ -290,7 +311,8 @@ func (a *Acexy) releaseStream(stream *AceStream) error {
 	if !ok {
 		return fmt.Errorf(`stream "%s" not found`, stream.ID)
 	}
-	if ongoingStream.clients > 0 {
+	// Only allow release if no clients or if the stream has failed
+	if ongoingStream.clients > 0 && !ongoingStream.failed {
 		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
 	}
 

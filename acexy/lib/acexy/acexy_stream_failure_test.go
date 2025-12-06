@@ -6,7 +6,6 @@ package acexy
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -184,23 +183,3 @@ func TestStreamWithZeroClientsImmediatelyCleanedUp(t *testing.T) {
 
 	t.Log("Stream with 0 clients was immediately cleaned up and recreated")
 }
-
-// Helper function to parse port
-func parseInt(port string) int {
-	var portInt int
-	fmt.Sscanf(port, "%d", &portInt)
-	return portInt
-}
-
-// Mock writer for testing
-type mockWriter struct {
-	data []byte
-}
-
-func (m *mockWriter) Write(p []byte) (n int, err error) {
-	m.data = append(m.data, p...)
-	return len(p), nil
-}
-
-// Ensure mockWriter implements io.Writer
-var _ io.Writer = (*mockWriter)(nil)
