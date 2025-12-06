@@ -206,6 +206,7 @@ func TestSelectBestEngine_SkipsRecovering(t *testing.T) {
 		ctx:                 ctx,
 		cancel:              cancel,
 		engineErrors:        make(map[string]*engineErrorState),
+		pendingStreams:      make(map[string]int),
 	}
 
 	// Mark the second engine as recovering

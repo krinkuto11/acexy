@@ -58,6 +58,8 @@ func TestConcurrentEngineSelection(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
+		engineErrors:        make(map[string]*engineErrorState),
+		pendingStreams:      make(map[string]int),
 	}
 
 	// Simulate concurrent requests trying to select an engine
@@ -147,6 +149,8 @@ func TestEngineSelectionWithoutBlocking(t *testing.T) {
 		hc:                  &http.Client{Timeout: 3 * time.Second},
 		ctx:                 ctx,
 		cancel:              cancel,
+		engineErrors:        make(map[string]*engineErrorState),
+		pendingStreams:      make(map[string]int),
 	}
 
 	// Make multiple sequential selections

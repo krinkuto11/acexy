@@ -200,6 +200,8 @@ func TestProvisionAcestream_StructuredError(t *testing.T) {
 		hc:     &http.Client{Timeout: 3 * time.Second},
 		ctx:    ctx,
 		cancel: cancel,
+		engineErrors:        make(map[string]*engineErrorState),
+		pendingStreams:      make(map[string]int),
 	}
 
 	_, err := client.ProvisionAcestream()

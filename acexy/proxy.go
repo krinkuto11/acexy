@@ -169,6 +169,13 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			selectedPort = port
 			selectedEngineContainerID = engineContainerID
 			slog.Info("Selected engine from orchestrator", "host", host, "port", port)
+
+			// Ensure we untrack the pending stream when done, regardless of success/failure
+			defer func() {
+				if selectedEngineContainerID != "" {
+					p.Orch.UntrackPendingStream(selectedEngineContainerID)
+				}
+			}()
 		}
 	} else {
 		// No orchestrator configured, use the default configured engine
@@ -430,7 +437,7 @@ func parseArgs() {
 	flag.DurationVar(&streamTimeout, "timeout", 60*time.Second, "Stream timeout (M3U8 mode)")
 	flag.BoolVar(&m3u8, "m3u8", false, "M3U8 mode")
 	flag.DurationVar(&emptyTimeout, "emptyTimeout", 10*time.Second, "Empty timeout (no data copied)")
-	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 20*time.Second, "Timeout to receive first response byte from engine")
+	flag.DurationVar(&noResponseTimeout, "noResponseTimeout", 45*time.Second, "Timeout to receive first response byte from engine (increased for engines under load)")
 	flag.IntVar(&maxStreamsPerEngine, "maxStreamsPerEngine", 1, "Maximum streams per engine when using orchestrator")
 	flag.BoolVar(&debugMode, "debugMode", false, "Enable debug mode with detailed logging")
 	flag.StringVar(&debugLogDir, "debugLogDir", "./debug_logs", "Directory for debug logs")
