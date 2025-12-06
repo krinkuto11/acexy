@@ -125,17 +125,18 @@ func (a *Acexy) Init() {
 
 // cleanupStaleStreams runs in the background to clean up streams that may have gotten stuck
 func (a *Acexy) cleanupStaleStreams() {
-	ticker := time.NewTicker(5 * time.Minute) // Check every 5 minutes
+	ticker := time.NewTicker(1 * time.Minute) // Check every 1 minute
 	defer ticker.Stop()
 
 	for range ticker.C {
 		a.mutex.Lock()
-		staleCutoff := time.Now().Add(-30 * time.Minute) // Consider streams older than 30 minutes as potentially stale
+		staleCutoff := time.Now().Add(-5 * time.Minute) // Consider streams older than 5 minutes as potentially stale
 
 		for aceId, stream := range a.streams {
-			// Clean up streams that have no clients and no active player for more than 30 minutes
+			// Clean up streams that have no clients and no active player
+			// More aggressive cleanup: check every minute and clean streams idle for 5+ minutes
 			if stream.clients == 0 && stream.player == nil && stream.createdAt.Before(staleCutoff) {
-				slog.Warn("Cleaning up stale stream", "stream", aceId, "created_at", stream.createdAt)
+				slog.Warn("Cleaning up stale stream", "stream", aceId, "created_at", stream.createdAt, "age", time.Since(stream.createdAt))
 				delete(a.streams, aceId)
 
 				// Close the done channel if not already closed
@@ -177,17 +178,24 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 			// Continue to create a new stream
 		} else if stream.player == nil && stream.clients == 0 {
 			// If stream has no clients and no player, it's in a broken or idle state
-			// Clean it up immediately to avoid reusing a failed stream
-			slog.Debug("Cleaning up idle/broken stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
-			delete(a.streams, aceId)
-			// Close the done channel if not already closed
-			select {
-			case <-stream.done:
-				// Already closed
-			default:
-				close(stream.done)
+			// Clean it up if it's been idle for more than 30 seconds
+			idleTime := time.Since(stream.createdAt)
+			if idleTime > 30*time.Second {
+				slog.Info("Cleaning up idle/broken stream entry", "stream", aceId, "age", idleTime)
+				delete(a.streams, aceId)
+				// Close the done channel if not already closed
+				select {
+				case <-stream.done:
+					// Already closed
+				default:
+					close(stream.done)
+				}
+				// Continue to create a new stream
+			} else {
+				// Stream is still fresh, might be waiting for StartStream
+				slog.Debug("Reusing recent unstarted stream", "stream", aceId, "age", idleTime)
+				return stream.stream, nil
 			}
-			// Continue to create a new stream
 		} else {
 			slog.Info("Reusing existing active stream", "stream", aceId, "clients", stream.clients)
 			return stream.stream, nil
@@ -580,6 +588,37 @@ func (a *Acexy) SetStreamEngineInfo(aceId AceID, host string, port int, containe
 		slog.Debug("Set engine info for stream", "stream", aceId, "host", host, "port", port, "container_id", containerID)
 	} else {
 		slog.Warn("Cannot set engine info for non-existent stream", "stream", aceId)
+	}
+}
+
+// CleanupUnstartedStream removes a stream that was fetched but never started
+// This is used when a client disconnects before StartStream is called
+func (a *Acexy) CleanupUnstartedStream(aceId AceID) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+
+	stream, ok := a.streams[aceId]
+	if !ok {
+		return
+	}
+
+	// Only clean up if the stream was never started (no clients, no player)
+	if stream.clients == 0 && stream.player == nil {
+		slog.Info("Cleaning up unstarted stream due to client disconnect", "stream", aceId)
+		delete(a.streams, aceId)
+
+		// Close the done channel if not already closed
+		select {
+		case <-stream.done:
+			// Already closed
+		default:
+			close(stream.done)
+		}
+
+		// Try to close the stream on the backend (don't fail if this errors)
+		if err := CloseStream(stream.stream); err != nil {
+			slog.Debug("Error closing unstarted stream backend", "stream", aceId, "error", err)
+		}
 	}
 }
 

@@ -218,6 +218,17 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if client has already disconnected after FetchStream
+	// If so, clean up the stream immediately to avoid hanging streams
+	select {
+	case <-r.Context().Done():
+		slog.Info("Client disconnected during stream setup", "stream", aceId)
+		p.Acexy.CleanupUnstartedStream(aceId)
+		return
+	default:
+		// Client still connected, continue
+	}
+
 	// Set engine info on the stream for the /ace/streams API
 	p.Acexy.SetStreamEngineInfo(aceId, selectedHost, selectedPort, selectedEngineContainerID)
 
