@@ -158,7 +158,7 @@ The multi-arch manifest ensures optimal performance by using native builds whene
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
 | `ACEXY_LISTEN_ADDR` | Address where acexy listens | `:8080` |
-| `ACEXY_BUFFER` | Stream buffer size for smooth playback. Larger buffer reduces frame drops by handling network jitter and bursty data delivery. | `4.2MiB` |
+| `ACEXY_BUFFER` | Stream buffer size (prevents frame drops) | `4.2MiB` |
 | `ACEXY_NO_RESPONSE_TIMEOUT` | Timeout waiting for AceStream middleware response | `1s` |
 | `ACEXY_EMPTY_TIMEOUT` | Timeout to close stream after receiving empty data | `1m` |
 

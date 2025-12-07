@@ -125,7 +125,7 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	defer resp.Body.Close()
 
 	// Use buffered copier to reduce frame drops
-	// The larger buffer (default 4.2MiB) helps smooth out streaming by:
+	// The larger buffer (configured via ACEXY_BUFFER, default 4.2MiB) helps smooth out streaming by:
 	// 1. Reducing frequency of write operations
 	// 2. Better handling of network jitter
 	// 3. Buffering bursts of data for consistent delivery
