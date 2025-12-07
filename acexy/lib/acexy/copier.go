@@ -56,6 +56,16 @@ func (c *Copier) Copy() error {
 	}()
 
 	_, err := io.Copy(c, c.Source)
+	
+	// Flush the buffer when copy completes (EOF or error)
+	// This ensures buffered data is written before returning
+	if ferr := c.bufferedWriter.Flush(); ferr != nil {
+		slog.Debug("Error flushing buffer", "error", ferr)
+		if err == nil {
+			err = ferr
+		}
+	}
+	
 	return err
 }
 

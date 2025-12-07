@@ -16,11 +16,10 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dustin/go-humanize"
-	"net/url"
-	"strings"
 )
 
 var (
@@ -62,8 +61,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.HandleStream(w, r)
 	case APIv1_URL + "/status":
 		p.HandleStatus(w, r)
-	case APIv1_URL + "/streams":
-		p.HandleActiveStreams(w, r)
 	case "/":
 		_, _ = fmt.Fprintln(w, LICENSE)
 	default:
@@ -191,26 +188,11 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// Gather the stream information
 	stream, err := p.Acexy.FetchStream(aceId, q)
 	if err != nil {
-		slog.Error("Failed to start stream", "stream", aceId, "error", err)
-
-		// Emit error events to orchestrator even if FetchStream fails
-		// This ensures the orchestrator knows which engine was attempted and failed
-		if p.Orch != nil {
-			idType, key := aceId.ID()
-			// Generate stream ID for failed stream (use a placeholder playback ID)
-			failedStreamID := key + "|fetch_failed"
-			orchKeyType := mapAceIDTypeToOrchestrator(idType)
-
-			// Emit stream_started first so orchestrator tracks the engine usage attempt
-			slog.Debug("Emitting stream_started event for failed fetch", "stream_id", failedStreamID, "host", selectedHost, "port", selectedPort)
-			p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
-				"fetch_failed", "", "", failedStreamID, selectedEngineContainerID)
-
-			// Then immediately emit stream_ended with the failure reason
-			slog.Debug("Emitting stream_ended event for failed stream fetch", "stream_id", failedStreamID)
-			p.Orch.EmitEnded(failedStreamID, "fetch_stream_failed")
-
-			// Record engine failure for error recovery tracking
+		statusCode = http.StatusInternalServerError
+		slog.Error("Failed to fetch stream", "stream", aceId, "error", err)
+		
+		// Record engine failure for error recovery tracking
+		if p.Orch != nil && selectedEngineContainerID != "" {
 			p.Orch.RecordEngineFailure(selectedEngineContainerID)
 		}
 
@@ -218,93 +200,49 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set engine info on the stream for the /ace/streams API
-	p.Acexy.SetStreamEngineInfo(aceId, selectedHost, selectedPort, selectedEngineContainerID)
-
-	// Prepare orchestrator event data early
-	var orchEventData struct {
-		streamID   string
-		idType     acexy.AceIDType
-		key        string
-		playbackID string
+	// Emit stream started event to orchestrator for internal tracking
+	if p.Orch != nil {
+		idType, key := aceId.ID()
+		playbackID := playbackIDFromStat(stream.StatURL)
+		streamID := key + "|" + playbackID
+		orchKeyType := mapAceIDTypeToOrchestrator(idType)
+		
+		slog.Debug("Emitting stream_started event to orchestrator",
+			"stream_id", streamID, "host", selectedHost, "port", selectedPort)
+		
+		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, key,
+			playbackID, stream.StatURL, stream.CommandURL, streamID, selectedEngineContainerID)
 	}
 
-	if p.Orch != nil && stream != nil {
-		orchEventData.idType, orchEventData.key = aceId.ID()
-		orchEventData.playbackID = playbackIDFromStat(stream.StatURL)
-		// Generate consistent stream ID: key|playback_session_id format expected by orchestrator
-		orchEventData.streamID = orchEventData.key + "|" + orchEventData.playbackID
-
-		// Emit stream started event early for orchestrator tracking
-		// Use the selected engine host/port instead of the original acexy configuration
-		orchKeyType := mapAceIDTypeToOrchestrator(orchEventData.idType)
-		p.Orch.EmitStarted(selectedHost, selectedPort, orchKeyType, orchEventData.key,
-			orchEventData.playbackID, stream.StatURL, stream.CommandURL, orchEventData.streamID, selectedEngineContainerID)
-
-		// Ensure stream ended event is always emitted, even on errors
-		defer func() {
-			if r := recover(); r != nil {
-				p.Orch.EmitEnded(orchEventData.streamID, "panic")
-				panic(r) // Re-panic after logging
-			} else {
-				p.Orch.EmitEnded(orchEventData.streamID, "handler_exit")
-			}
-		}()
-	}
-
-	// Set response headers first, before starting the stream or writing status
-	// When in M3U8 mode, the client connects directly to a subset of endpoints, so we are blind to what the client
-	// is doing. However, it periodically polls the M3U8 list to verify nothing has changed,
-	// simulating a new connection. Therefore, we can accumulate a lot of open streams and let
-	// the timeout finish them.
-	//
-	// When in MPEG-TS mode, the client connects to the endpoint and waits for the stream to finish.
-	// This is a blocking operation, so we can finish the stream when the client disconnects.
+	// Set response headers
 	switch p.Acexy.Endpoint {
 	case acexy.M3U8_ENDPOINT:
 		w.Header().Set("Content-Type", "application/x-mpegURL")
-		timedOut := acexy.SetTimeout(streamTimeout)
-		defer func() {
-			<-timedOut
-			p.Acexy.StopStream(stream, w)
-		}()
 	case acexy.MPEG_TS_ENDPOINT:
 		w.Header().Set("Content-Type", "video/MP2T")
 		w.Header().Set("Transfer-Encoding", "chunked")
-		defer p.Acexy.StopStream(stream, w)
 	}
 
-	// And start playing the stream. The `StartStream` will dump the contents of the new or
-	// existing stream to the client. It takes an interface of `io.Writer` to write the stream
-	// contents to. The `http.ResponseWriter` implements the `io.Writer` interface, so we can
-	// pass it directly.
+	// Write headers before starting stream
+	w.WriteHeader(http.StatusOK)
+
+	// Start streaming - this blocks until complete or client disconnects
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
 	if err := p.Acexy.StartStream(stream, w); err != nil {
-		slog.Error("Failed to start stream", "stream", aceId, "error", err)
-		// Emit error event to orchestrator before returning
-		if p.Orch != nil && orchEventData.streamID != "" {
-			p.Orch.EmitEnded(orchEventData.streamID, "start_stream_failed")
-			// Record engine failure for error recovery tracking
+		slog.Error("Failed to stream", "stream", aceId, "error", err)
+		// Record engine failure for error recovery tracking
+		if p.Orch != nil && selectedEngineContainerID != "" {
 			p.Orch.RecordEngineFailure(selectedEngineContainerID)
 		}
-		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Now that we know the stream started successfully, write the status
-	w.WriteHeader(http.StatusOK)
-
-	// Reset engine error state on successful stream start
+	// Stream completed successfully
+	slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId)
+	
+	// Reset engine error state on successful stream completion
 	if p.Orch != nil && selectedEngineContainerID != "" {
 		p.Orch.ResetEngineErrors(selectedEngineContainerID)
-	}
-
-	// And wait for the client to disconnect
-	select {
-	case <-r.Context().Done():
-		slog.Debug("Client disconnected", "path", r.URL.Path)
-	case <-p.Acexy.WaitStream(stream):
-		slog.Debug("Stream finished", "path", r.URL.Path)
 	}
 }
 
@@ -355,57 +293,19 @@ func (p *Proxy) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the client has included the ID parameter
-	var id *acexy.AceID
-	if r.URL.Query().Has("id") || r.URL.Query().Has("infohash") {
-		aceId, err := acexy.NewAceID(r.URL.Query().Get("id"), r.URL.Query().Get("infohash"))
-		if err != nil {
-			slog.Error("Invalid ID parameter", "path", r.URL.Path, "error", err)
-			http.Error(w, "Invalid ID parameter", http.StatusBadRequest)
-			return
-		}
-		id = &aceId
-	}
-
-	// Get the status
-	status, err := p.Acexy.GetStatus(id)
+	// In stateless mode, just return basic health status
+	_, err := p.Acexy.GetStatus(nil)
 	if err != nil {
 		slog.Error("Failed to get status", "error", err)
 		http.Error(w, "Failed to get status: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// And write it to the response
+	// Return simple health check
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"clients":  status.Clients,
-		"streams":  status.Streams,
-		"streamId": status.ID,
-		"stat_url": status.StatURL,
+		"status": "ok",
 	})
-}
-
-// HandleActiveStreams returns information about all currently active streams
-// This endpoint can be used by the orchestrator to query which streams are really
-// being used, allowing it to identify and remove hanging streams from AceStream engines.
-func (p *Proxy) HandleActiveStreams(w http.ResponseWriter, r *http.Request) {
-	// Verify the request method
-	if r.Method != http.MethodGet {
-		slog.Error("Method not allowed", "method", r.Method, "path", r.URL.Path)
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Get all active streams from Acexy
-	streams := p.Acexy.GetActiveStreams()
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"total_streams": len(streams),
-		"streams":       streams,
-	}); err != nil {
-		slog.Error("Failed to encode active streams response", "error", err)
-	}
 }
 
 func (s *Size) Set(value string) error {
@@ -555,7 +455,6 @@ func main() {
 	mux.Handle(APIv1_URL+"/getstream", proxy)
 	mux.Handle(APIv1_URL+"/getstream/", proxy)
 	mux.Handle(APIv1_URL+"/status", proxy)
-	mux.Handle(APIv1_URL+"/streams", proxy)
 	mux.Handle("/", proxy) // Let proxy handle all other requests including root
 
 	// Start the HTTP server
@@ -578,27 +477,48 @@ func mapAceIDTypeToOrchestrator(aceType acexy.AceIDType) string {
 		return "content_id" // default fallback
 	}
 }
+
+// playbackIDFromStat extracts the playback session ID from a stat URL
 func playbackIDFromStat(statURL string) string {
 	if statURL == "" {
 		return ""
 	}
 
-	u, err := url.Parse(statURL)
-	if err != nil {
+	// Validate the URL is parseable (basic check)
+	if !strings.Contains(statURL, "/") {
+		slog.Debug("Invalid stat URL format", "url", statURL)
 		return ""
 	}
 
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	// Expect at least 3 parts: ['ace', 'stat', 'infohash', 'playback_session_id']
-	// But the path structure could be: .../ace/stat/<infohash>/<playback_session_id>
-	if len(parts) >= 4 && parts[len(parts)-3] == "stat" {
+	// Parse URL to extract path components
+	// Expected format: .../ace/stat/<infohash>/<playback_session_id>
+	// We use simple string splitting for efficiency, but validate structure
+	urlPath := statURL
+	if idx := strings.Index(statURL, "://"); idx >= 0 {
+		// Remove scheme (http:// or https://)
+		urlPath = statURL[idx+3:]
+	}
+	if idx := strings.Index(urlPath, "/"); idx >= 0 {
+		// Remove host/port, keep only path
+		urlPath = urlPath[idx:]
+	}
+	
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+	
+	// Find the "stat" segment and return the ID after it
+	// Expected: [..., "ace", "stat", <infohash>, <playback_session_id>]
+	for i, part := range parts {
+		if part == "stat" && i+2 < len(parts) {
+			return parts[i+2] // Return playback_session_id
+		}
+	}
+	
+	// Fallback: return last path component if structure is different
+	if len(parts) > 0 && parts[len(parts)-1] != "" {
+		slog.Debug("Using fallback playback ID extraction", "url", statURL, "id", parts[len(parts)-1])
 		return parts[len(parts)-1]
 	}
-
-	// Fallback: if path structure is different but has at least one part, return the last one
-	if len(parts) >= 1 {
-		return parts[len(parts)-1]
-	}
-
+	
+	slog.Warn("Could not extract playback ID from stat URL", "url", statURL)
 	return ""
 }

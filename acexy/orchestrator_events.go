@@ -1032,8 +1032,9 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 	}
 
 	// Sort engines by health status first (healthy engines prioritized),
+	// then by stream count (empty engines prioritized - addressing issue where all streams go to forwarded engines),
 	// then by forwarded status (forwarded engines prioritized as they are faster),
-	// then by stream count (ascending), then by last_stream_usage (ascending - oldest first)
+	// then by last_stream_usage (ascending - oldest first)
 	for i := 0; i < len(availableEngines); i++ {
 		for j := i + 1; j < len(availableEngines); j++ {
 			iEngine := availableEngines[i]
@@ -1049,22 +1050,22 @@ func (c *orchClient) SelectBestEngine() (string, int, string, error) {
 					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 				}
 			} else {
-				// Both have same health status, sort by forwarded status (forwarded engines prioritized)
-				iForwarded := iEngine.engine.Forwarded
-				jForwarded := jEngine.engine.Forwarded
+				// Both have same health status, sort by active stream count (empty engines prioritized)
+				if iEngine.activeStreams > jEngine.activeStreams {
+					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+				} else if iEngine.activeStreams == jEngine.activeStreams {
+					// Same health and stream count, sort by forwarded status (forwarded engines prioritized)
+					iForwarded := iEngine.engine.Forwarded
+					jForwarded := jEngine.engine.Forwarded
 
-				if iForwarded != jForwarded {
-					// If one is forwarded and other is not, prioritize forwarded
-					if jForwarded && !iForwarded {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					}
-				} else {
-					// Both have same health and forwarded status, sort by active stream count
-					if iEngine.activeStreams > jEngine.activeStreams {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					} else if iEngine.activeStreams == jEngine.activeStreams {
-						// Same health, forwarded status, and stream count, sort by last_stream_usage (ascending - oldest first)
-						// This ensures that among engines with same health, forwarded status, and stream count, we pick the one unused the longest
+					if iForwarded != jForwarded {
+						// If one is forwarded and other is not, prioritize forwarded
+						if jForwarded && !iForwarded {
+							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+						}
+					} else {
+						// Same health, stream count, and forwarded status, sort by last_stream_usage (ascending - oldest first)
+						// This ensures that among engines with same health, stream count, and forwarded status, we pick the one unused the longest
 						if iEngine.engine.LastStreamUsage.After(jEngine.engine.LastStreamUsage) {
 							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 						}

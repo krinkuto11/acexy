@@ -66,8 +66,9 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 	copy(availableEngines, engines)
 
 	// Sort engines by health status first (healthy engines prioritized),
+	// then by stream count (empty engines prioritized - addressing issue where all streams go to forwarded engines),
 	// then by forwarded status (forwarded engines prioritized as they are faster),
-	// then by stream count (ascending), then by last_stream_usage (ascending - oldest first)
+	// then by last_stream_usage (ascending - oldest first)
 	for i := 0; i < len(availableEngines); i++ {
 		for j := i + 1; j < len(availableEngines); j++ {
 			iEngine := availableEngines[i]
@@ -83,22 +84,22 @@ func TestSelectBestEngineLoadBalancing(t *testing.T) {
 					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 				}
 			} else {
-				// Both have same health status, sort by forwarded status (forwarded engines prioritized)
-				iForwarded := iEngine.engine.Forwarded
-				jForwarded := jEngine.engine.Forwarded
+				// Both have same health status, sort by active stream count (empty engines prioritized)
+				if iEngine.activeStreams > jEngine.activeStreams {
+					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+				} else if iEngine.activeStreams == jEngine.activeStreams {
+					// Same health and stream count, sort by forwarded status (forwarded engines prioritized)
+					iForwarded := iEngine.engine.Forwarded
+					jForwarded := jEngine.engine.Forwarded
 
-				if iForwarded != jForwarded {
-					// If one is forwarded and other is not, prioritize forwarded
-					if jForwarded && !iForwarded {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					}
-				} else {
-					// Both have same health and forwarded status, sort by active stream count
-					if iEngine.activeStreams > jEngine.activeStreams {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					} else if iEngine.activeStreams == jEngine.activeStreams {
-						// Same health, forwarded status, and stream count, sort by last_stream_usage (ascending - oldest first)
-						// This ensures that among engines with same health, forwarded status, and stream count, we pick the one unused the longest
+					if iForwarded != jForwarded {
+						// If one is forwarded and other is not, prioritize forwarded
+						if jForwarded && !iForwarded {
+							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+						}
+					} else {
+						// Same health, stream count, and forwarded status, sort by last_stream_usage (ascending - oldest first)
+						// This ensures that among engines with same health, stream count, and forwarded status, we pick the one unused the longest
 						if iEngine.engine.LastStreamUsage.After(jEngine.engine.LastStreamUsage) {
 							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 						}
@@ -232,8 +233,9 @@ func TestSelectBestEngineForwardedPriority(t *testing.T) {
 	copy(availableEngines, engines)
 
 	// Sort engines by health status first (healthy engines prioritized),
+	// then by stream count (empty engines prioritized - addressing issue where all streams go to forwarded engines),
 	// then by forwarded status (forwarded engines prioritized as they are faster),
-	// then by stream count (ascending), then by last_stream_usage (ascending - oldest first)
+	// then by last_stream_usage (ascending - oldest first)
 	for i := 0; i < len(availableEngines); i++ {
 		for j := i + 1; j < len(availableEngines); j++ {
 			iEngine := availableEngines[i]
@@ -249,22 +251,22 @@ func TestSelectBestEngineForwardedPriority(t *testing.T) {
 					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 				}
 			} else {
-				// Both have same health status, sort by forwarded status (forwarded engines prioritized)
-				iForwarded := iEngine.engine.Forwarded
-				jForwarded := jEngine.engine.Forwarded
+				// Both have same health status, sort by active stream count (empty engines prioritized)
+				if iEngine.activeStreams > jEngine.activeStreams {
+					availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+				} else if iEngine.activeStreams == jEngine.activeStreams {
+					// Same health and stream count, sort by forwarded status (forwarded engines prioritized)
+					iForwarded := iEngine.engine.Forwarded
+					jForwarded := jEngine.engine.Forwarded
 
-				if iForwarded != jForwarded {
-					// If one is forwarded and other is not, prioritize forwarded
-					if jForwarded && !iForwarded {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					}
-				} else {
-					// Both have same health and forwarded status, sort by active stream count
-					if iEngine.activeStreams > jEngine.activeStreams {
-						availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
-					} else if iEngine.activeStreams == jEngine.activeStreams {
-						// Same health, forwarded status, and stream count, sort by last_stream_usage (ascending - oldest first)
-						// This ensures that among engines with same health, forwarded status, and stream count, we pick the one unused the longest
+					if iForwarded != jForwarded {
+						// If one is forwarded and other is not, prioritize forwarded
+						if jForwarded && !iForwarded {
+							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
+						}
+					} else {
+						// Same health, stream count, and forwarded status, sort by last_stream_usage (ascending - oldest first)
+						// This ensures that among engines with same health, stream count, and forwarded status, we pick the one unused the longest
 						if iEngine.engine.LastStreamUsage.After(jEngine.engine.LastStreamUsage) {
 							availableEngines[i], availableEngines[j] = availableEngines[j], availableEngines[i]
 						}
@@ -275,12 +277,12 @@ func TestSelectBestEngineForwardedPriority(t *testing.T) {
 	}
 
 	// Verify sorting results
-	// Expected order:
-	// 1. engine2 (healthy, forwarded, 0 streams)
-	// 2. engine4 (healthy, forwarded, 1 stream)
-	// 3. engine1 (healthy, not forwarded, 0 streams)
-	// 4. engine3 (healthy, not forwarded, 1 stream)
-	// 5. engine5 (unhealthy, forwarded, 0 streams)
+	// Expected order (stream count prioritized before forwarded status):
+	// 1. engine2 (healthy, 0 streams, forwarded) - empty forwarded engine
+	// 2. engine1 (healthy, 0 streams, not forwarded) - empty non-forwarded engine
+	// 3. engine4 (healthy, 1 stream, forwarded) - non-empty forwarded engine
+	// 4. engine3 (healthy, 1 stream, not forwarded) - non-empty non-forwarded engine
+	// 5. engine5 (unhealthy, 0 streams, forwarded) - unhealthy engine
 
 	// First should be healthy forwarded empty engine (engine2)
 	if availableEngines[0].engine.ContainerID != "engine2" {
@@ -296,26 +298,26 @@ func TestSelectBestEngineForwardedPriority(t *testing.T) {
 		t.Errorf("Expected first engine to be healthy, got %s", availableEngines[0].engine.HealthStatus)
 	}
 
-	// Second should be healthy forwarded engine with 1 stream (engine4)
-	if availableEngines[1].engine.ContainerID != "engine4" {
-		t.Errorf("Expected engine4 (healthy, forwarded, 1 stream) to be second, got %s", availableEngines[1].engine.ContainerID)
+	// Second should be healthy non-forwarded empty engine (engine1)
+	if availableEngines[1].engine.ContainerID != "engine1" {
+		t.Errorf("Expected engine1 (healthy, not forwarded, empty) to be second, got %s", availableEngines[1].engine.ContainerID)
 	}
-	if !availableEngines[1].engine.Forwarded {
-		t.Errorf("Expected second engine to be forwarded")
+	if availableEngines[1].engine.Forwarded {
+		t.Errorf("Expected second engine to not be forwarded")
 	}
-	if availableEngines[1].activeStreams != 1 {
-		t.Errorf("Expected second engine to have 1 stream, got %d", availableEngines[1].activeStreams)
+	if availableEngines[1].activeStreams != 0 {
+		t.Errorf("Expected second engine to have 0 streams, got %d", availableEngines[1].activeStreams)
 	}
 
-	// Third should be healthy non-forwarded empty engine (engine1)
-	if availableEngines[2].engine.ContainerID != "engine1" {
-		t.Errorf("Expected engine1 (healthy, not forwarded, empty) to be third, got %s", availableEngines[2].engine.ContainerID)
+	// Third should be healthy forwarded engine with 1 stream (engine4)
+	if availableEngines[2].engine.ContainerID != "engine4" {
+		t.Errorf("Expected engine4 (healthy, forwarded, 1 stream) to be third, got %s", availableEngines[2].engine.ContainerID)
 	}
-	if availableEngines[2].engine.Forwarded {
-		t.Errorf("Expected third engine to not be forwarded")
+	if !availableEngines[2].engine.Forwarded {
+		t.Errorf("Expected third engine to be forwarded")
 	}
-	if availableEngines[2].activeStreams != 0 {
-		t.Errorf("Expected third engine to have 0 streams, got %d", availableEngines[2].activeStreams)
+	if availableEngines[2].activeStreams != 1 {
+		t.Errorf("Expected third engine to have 1 stream, got %d", availableEngines[2].activeStreams)
 	}
 
 	// Fourth should be healthy non-forwarded engine with 1 stream (engine3)

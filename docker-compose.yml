@@ -13,7 +13,7 @@ services:
       ACEXY_TIMEOUT: "60s"           # Stream timeout when in M3U8 mode
       ACEXY_M3U8: "false"            # Disable M3U8 mode
       ACEXY_EMPTY_TIMEOUT: "60s"     # Timeout to close the connection if no data is received
-      ACEXY_BUFFER: "4MB"            # Buffer size is 4MB
+      ACEXY_BUFFER: "4.2MiB"         # Buffer size for smooth playback (prevents frame drops)
       ACEXY_NO_RESPONSE_TIMEOUT: "10s"  # Timeout to close the connection if no response is received
       # Orchestrator integration (optional)
       ACEXY_ORCH_URL: "http://orchestrator:8000"           # Base URL for orchestrator API (leave empty to disable orchestrator integration)

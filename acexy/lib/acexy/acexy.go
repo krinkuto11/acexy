@@ -7,15 +7,11 @@ package acexy
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"javinator9889/acexy/lib/pmw"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,8 +19,6 @@ import (
 
 // As of how the middleware is defined, we tell Go the structure that should match the HTTP
 // response for AceStream: https://docs.acestream.net/developers/start-playback/#using-middleware.
-// We are interested in the "playback_url" and the "command_url" fields: The first one
-// references the stream, and the second one tells the stream to finish.
 type AceStreamResponse struct {
 	PlaybackURL       string `json:"playback_url"`
 	StatURL           string `json:"stat_url"`
@@ -47,14 +41,10 @@ type AceStreamCommand struct {
 }
 
 type AcexyStatus struct {
-	Clients *uint  `json:"clients,omitempty"`
-	Streams *uint  `json:"streams,omitempty"`
-	ID      *AceID `json:"stream_id,omitempty"`
-	StatURL string `json:"stat_url,omitempty"`
+	// Simplified status - just basic info
 }
 
-// The stream information is stored in a structure referencing the `AceStreamResponse`
-// plus some extra information to determine whether we should keep the stream alive or not.
+// The stream information from AceStream response
 type AceStream struct {
 	PlaybackURL string
 	StatURL     string
@@ -62,21 +52,8 @@ type AceStream struct {
 	ID          AceID
 }
 
-type ongoingStream struct {
-	clients   uint
-	done      chan struct{}
-	player    *http.Response
-	stream    *AceStream
-	copier    *Copier
-	writers   *pmw.PMultiWriter
-	createdAt time.Time // Track when the stream was created
-	// Engine information (set when using orchestrator)
-	engineHost        string
-	enginePort        int
-	engineContainerID string
-}
-
-// Structure referencing the AceStream Proxy - this is, ourselves
+// Structure referencing the AceStream Proxy
+// This is now a stateless proxy that forwards requests to AceStream engines
 type Acexy struct {
 	Scheme            string        // The scheme to be used when connecting to the AceStream middleware
 	Host              string        // The host to be used when connecting to the AceStream middleware
@@ -86,9 +63,6 @@ type Acexy struct {
 	BufferSize        int           // The buffer size to use when copying the data
 	NoResponseTimeout time.Duration // Timeout to wait for a response from the AceStream middleware
 
-	// Information about ongoing streams
-	streams    map[AceID]*ongoingStream
-	mutex      *sync.Mutex
 	middleware *http.Client
 }
 
@@ -102,98 +76,32 @@ const (
 
 // Initializes the Acexy structure
 func (a *Acexy) Init() {
-	a.streams = make(map[AceID]*ongoingStream)
-	a.mutex = &sync.Mutex{}
-	// The transport to be used when connecting to the AceStream middleware. We have to tweak it
-	// a little bit to avoid compression and to limit the number of connections per host. Otherwise,
-	// the AceStream Middleware won't work.
+	// The transport optimized for concurrent requests
 	a.middleware = &http.Client{
 		Transport: &http.Transport{
 			DisableCompression:    true,
-			MaxIdleConns:          10,
-			MaxConnsPerHost:       10,
+			MaxIdleConns:          100, // Increased for better concurrent performance
+			MaxConnsPerHost:       100, // Increased for better concurrent performance
+			MaxIdleConnsPerHost:   50,  // Reuse connections efficiently
 			IdleConnTimeout:       30 * time.Second,
 			ResponseHeaderTimeout: a.NoResponseTimeout,
 			ExpectContinueTimeout: 1 * time.Second,
 		},
 	}
-
-	// Start a background goroutine to clean up stale streams
-	go a.cleanupStaleStreams()
 }
 
-// cleanupStaleStreams runs in the background to clean up streams that may have gotten stuck
-func (a *Acexy) cleanupStaleStreams() {
-	ticker := time.NewTicker(5 * time.Minute) // Check every 5 minutes
-	defer ticker.Stop()
-
-	for range ticker.C {
-		a.mutex.Lock()
-		staleCutoff := time.Now().Add(-30 * time.Minute) // Consider streams older than 30 minutes as potentially stale
-
-		for aceId, stream := range a.streams {
-			// Clean up streams that have no clients and no active player for more than 30 minutes
-			if stream.clients == 0 && stream.player == nil && stream.createdAt.Before(staleCutoff) {
-				slog.Warn("Cleaning up stale stream", "stream", aceId, "created_at", stream.createdAt)
-				delete(a.streams, aceId)
-
-				// Close the done channel if not already closed
-				select {
-				case <-stream.done:
-					// Already closed
-				default:
-					close(stream.done)
-				}
-			}
-		}
-		a.mutex.Unlock()
-	}
-}
-
-// Starts a new stream. The stream is enqueued in the AceStream backend, returning a playback
-// URL to reproduce it and a command URL to finish it. If the stream is already enqueued,
-// the playback URL is returned. A number of clients can be reproducing the same stream at
-// the same time through the middleware. When the last client finishes, the stream is removed.
-// The stream is identified by the “id“ identifier. Optionally, takes extra parameters to
-// customize the stream.
+// FetchStream requests stream information from AceStream engine.
+// This is stateless - each request gets a unique PID and stream instance.
 func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, error) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	// Check if the stream is already enqueued
-	if stream, ok := a.streams[aceId]; ok {
-		// Verify that the existing stream is still valid by checking if it has a valid player connection
-		// or if it's in a clean state (no clients and no active player)
-		if stream.player == nil && stream.clients == 0 {
-			// If stream has no clients and no player, it's in a broken or idle state
-			// Clean it up immediately to avoid reusing a failed stream
-			slog.Debug("Cleaning up idle/broken stream entry", "stream", aceId, "age", time.Since(stream.createdAt))
-			delete(a.streams, aceId)
-			// Close the done channel if not already closed
-			select {
-			case <-stream.done:
-				// Already closed
-			default:
-				close(stream.done)
-			}
-			// Continue to create a new stream
-		} else {
-			slog.Info("Reusing existing active stream", "stream", aceId, "clients", stream.clients)
-			return stream.stream, nil
-		}
-	}
-
-	// Enqueue the middleware
+	// Simply call the AceStream engine to get stream info
 	middleware, err := GetStream(a, aceId, extraParams)
 	if err != nil {
 		slog.Error("Error getting stream middleware", "error", err)
-		// Ensure we don't leave any partial state in the streams map
-		delete(a.streams, aceId)
 		return nil, err
 	}
 
-	// We got the stream information, build the structure around it and register the stream
-	slog.Debug("Middleware Information", "id", aceId, "middleware", middleware)
+	// Build and return stream information
+	slog.Debug("Middleware Information", "id", aceId, "playback_url", middleware.Response.PlaybackURL)
 	stream := &AceStream{
 		PlaybackURL: middleware.Response.PlaybackURL,
 		StatURL:     middleware.Response.StatURL,
@@ -201,198 +109,58 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 		ID:          aceId,
 	}
 
-	a.streams[aceId] = &ongoingStream{
-		clients:   0,
-		done:      make(chan struct{}),
-		player:    nil,
-		stream:    stream,
-		writers:   pmw.New(),
-		createdAt: time.Now(),
-	}
-	slog.Info("Started new stream", "id", aceId, "clients", a.streams[aceId].clients)
+	slog.Info("Fetched stream from engine", "id", aceId)
 	return stream, nil
 }
 
+// StartStream initiates the stream and proxies it to the output writer.
+// This is stateless - just gets the stream from AceStream and copies it.
 func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	// Get the ongoing stream
-	ongoingStream, ok := a.streams[stream.ID]
-	if !ok {
-		slog.Debug("Stream not found", "stream", stream.ID)
-		return fmt.Errorf(`stream "%s" not found`, stream.ID)
-	}
-
-	// Add the writer to the list of writers
-	ongoingStream.writers.Add(out)
-
-	// Register the new client
-	ongoingStream.clients++
-
-	// Check if the stream is already being played
-	if ongoingStream.player != nil {
-		return nil
-	}
-
+	// Get the stream from AceStream
 	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
-		slog.Error("Failed to forward stream", "error", err)
-		// Remove the writer that was just added since we're failing
-		ongoingStream.writers.Remove(out)
-		ongoingStream.clients--
-		if ongoingStream.clients == 0 {
-			if releaseErr := a.releaseStream(stream); releaseErr != nil {
-				slog.Warn("Error releasing stream", "error", releaseErr)
-			}
-		}
+		slog.Error("Failed to get stream", "error", err)
 		return err
 	}
+	defer resp.Body.Close()
 
-	// Forward the response to the writers
-	ongoingStream.copier = &Copier{
-		Destination:  ongoingStream.writers,
+	// Use buffered copier to reduce frame drops
+	// The larger buffer (configured via ACEXY_BUFFER, default 4.2MiB) helps smooth out streaming by:
+	// 1. Reducing frequency of write operations
+	// 2. Better handling of network jitter
+	// 3. Buffering bursts of data for consistent delivery
+	copier := &Copier{
+		Destination:  out,
 		Source:       resp.Body,
 		EmptyTimeout: a.EmptyTimeout,
 		BufferSize:   a.BufferSize,
 	}
+	
+	err = copier.Copy()
+	if err != nil && !errors.Is(err, io.EOF) {
+		slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
+		return err
+	}
 
-	go func() {
-		// Start copying the stream
-		if err := ongoingStream.copier.Copy(); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				slog.Debug("Connection closed", "stream", stream.ID)
-			} else {
-				slog.Debug("Failed to copy response body", "stream", stream.ID, "error", err)
-			}
-		}
-		slog.Debug("Copy done", "stream", stream.ID)
-		select {
-		case <-ongoingStream.done:
-			slog.Debug("Stream already closed", "stream", stream.ID)
-		default:
-			close(ongoingStream.done)
-			slog.Debug("Stream closed", "stream", stream.ID)
-		}
-	}()
-
-	ongoingStream.player = resp
+	slog.Debug("Stream finished successfully", "stream", stream.ID)
 	return nil
 }
 
-// Releases a stream that is no longer being used. The stream is removed from the AceStream backend.
-// If the stream is not enqueued, an error is returned. If the stream has clients reproducing it,
-// the stream is not removed. The stream is identified by the “id“ identifier.
-//
-// Note: The global mutex is locked and unlocked by the caller.
-func (a *Acexy) releaseStream(stream *AceStream) error {
-	ongoingStream, ok := a.streams[stream.ID]
-	if !ok {
-		return fmt.Errorf(`stream "%s" not found`, stream.ID)
-	}
-	if ongoingStream.clients > 0 {
-		return fmt.Errorf(`stream "%s" has clients`, stream.ID)
-	}
-
-	// Remove the stream from the list first to prevent further access
-	defer delete(a.streams, stream.ID)
-	slog.Debug("Stopping stream", "stream", stream.ID)
-
-	// Close the stream backend connection (don't fail the cleanup if this fails)
-	if err := CloseStream(stream); err != nil {
-		slog.Debug("Error closing stream backend (continuing cleanup anyway)", "error", err)
-		// Don't return error here - we want to continue cleanup
-	}
-
-	// Close the player connection if it exists
-	if ongoingStream.player != nil {
-		slog.Debug("Closing player", "stream", stream.ID)
-		if err := ongoingStream.player.Body.Close(); err != nil {
-			slog.Debug("Error closing player body", "error", err)
-		}
-	}
-
-	// Close the `done' channel
-	select {
-	case <-ongoingStream.done:
-		slog.Debug("Stream already closed", "stream", stream.ID)
-	default:
-		close(ongoingStream.done)
-		slog.Debug("Stream done", "stream", stream.ID)
-	}
-	return nil
-}
-
-// Finishes a stream. The stream is removed from the AceStream backend. If the stream is not
-// enqueued, an error is returned. If the stream has clients reproducing it, the stream is not
-// removed. The stream is identified by the “id“ identifier.
-func (a *Acexy) StopStream(stream *AceStream, out io.Writer) error {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	// Get the ongoing stream
-	ongoingStream, ok := a.streams[stream.ID]
-	if !ok {
-		slog.Debug("Stream not found", "stream", stream.ID)
-		return fmt.Errorf(`stream "%s" not found`, stream.ID)
-	}
-
-	// Remove the writer from the list of writers
-	ongoingStream.writers.Remove(out)
-
-	// Unregister the client
-	if ongoingStream.clients > 0 {
-		ongoingStream.clients--
-		slog.Info("Client stopped", "stream", stream.ID, "clients", ongoingStream.clients)
-	} else {
-		slog.Warn("Stream has no clients", "stream", stream.ID)
-	}
-
-	// Check if we have to stop the stream
-	if ongoingStream.clients == 0 {
-		if err := a.releaseStream(stream); err != nil {
-			slog.Warn("Error releasing stream", "error", err)
-			return err
-		}
-		slog.Info("Stream done", "stream", stream.ID)
-	}
-	return nil
-}
-
-// Waits for the stream to finish. The stream is identified by the “id“ identifier. If the stream
-// is not enqueued, nil is returned. The function returns a channel that will be closed when the
-// stream finishes.
-func (a *Acexy) WaitStream(stream *AceStream) <-chan struct{} {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	// Get the ongoing stream
-	ongoingStream, ok := a.streams[stream.ID]
-	if !ok {
-		return nil
-	}
-
-	return ongoingStream.done
-}
-
-// Performs a request to the AceStream backend to start a new stream. It uses the Acexy
-// structure to get the host and port of the AceStream backend. The stream is identified
-// by the “id“ identifier. Optionally, takes extra parameters to customize the stream.
-// Returns the response from the AceStream backend. If the request fails, an error is returned.
-// If the `AceStreamMiddleware:error` field is not empty, an error is returned.
+// GetStream performs a request to the AceStream backend to start a new stream.
+// Each request gets a unique PID to prevent conflicts.
 func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddleware, error) {
-	slog.Debug("Getting stream", "id", aceId, "extraParams", extraParams)
+	slog.Debug("Getting stream", "id", aceId)
 	slog.Debug("Acexy Information", "scheme", a.Scheme, "host", a.Host, "port", a.Port)
+	
 	req, err := http.NewRequest("GET", a.Scheme+"://"+a.Host+":"+strconv.Itoa(a.Port)+string(a.Endpoint), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Add the query parameters. We use a unique PID to identify the client accessing the stream.
-	// This prevents errors when multiple streams are accessed at the same time. Because of
-	// using the UUID package, we can be sure that the PID is unique.
+	// Add the query parameters with a unique PID for this request
 	pid := uuid.NewString()
-	slog.Debug("Temporary PID", "pid", pid, "stream", aceId)
+	slog.Debug("Generated PID for stream", "pid", pid, "stream", aceId)
+	
 	if extraParams == nil {
 		extraParams = req.URL.Query()
 	}
@@ -400,7 +168,7 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 	extraParams.Set(string(idType), id)
 	extraParams.Set("format", "json")
 	extraParams.Set("pid", pid)
-	// and set the headers
+	
 	req.Header.Set("Content-Type", "application/json")
 	req.URL.RawQuery = extraParams.Encode()
 
@@ -413,10 +181,9 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 		slog.Debug("Error getting stream", "error", err)
 		return nil, err
 	}
-	slog.Debug("Stream response", "statusCode", res.StatusCode, "headers", res.Header, "res", res)
 	defer res.Body.Close()
 
-	// Read the response into the body
+	// Read the response
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		slog.Debug("Error reading stream response", "error", err)
@@ -437,9 +204,7 @@ func GetStream(a *Acexy, aceId AceID, extraParams url.Values) (*AceStreamMiddlew
 	return &response, nil
 }
 
-// Closes the stream by performing a request to the AceStream backend. The `stream` parameter
-// contains the command URL to send data to the middleware. As of the documentation, it is needed
-// to add a "method=stop" query parameter to finish the stream.
+// CloseStream closes a stream by sending a stop command to the AceStream backend.
 func CloseStream(stream *AceStream) error {
 	req, err := http.NewRequest("GET", stream.CommandURL, nil)
 	if err != nil {
@@ -451,7 +216,7 @@ func CloseStream(stream *AceStream) error {
 	req.URL.RawQuery = q.Encode()
 
 	client := &http.Client{
-		Timeout: 10 * time.Second, // Reasonable timeout for stop command
+		Timeout: 10 * time.Second,
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -459,7 +224,6 @@ func CloseStream(stream *AceStream) error {
 	}
 	defer res.Body.Close()
 
-	// Read the response into the body
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		slog.Debug("Error reading stream response", "error", err)
@@ -479,97 +243,18 @@ func CloseStream(stream *AceStream) error {
 	return nil
 }
 
-// Gets the status of a stream. If the `id` parameter is nil, the global status is returned.
-// If the stream is not enqueued, an error is returned. The stream is identified by the “id“
-// identifier.
+// GetStatus returns the simplified status of the proxy.
 func (a *Acexy) GetStatus(id *AceID) (AcexyStatus, error) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	// Return the global status if no ID is given
-	if id == nil {
-		streams := uint(len(a.streams))
-		return AcexyStatus{Streams: &streams}, nil
-	}
-
-	// Check if the stream is already enqueued
-	if stream, ok := a.streams[*id]; ok {
-		return AcexyStatus{
-			Clients: &stream.clients,
-			ID:      id,
-			StatURL: stream.stream.StatURL,
-		}, nil
-	}
-
-	return AcexyStatus{}, fmt.Errorf(`stream "%s" not found`, id)
+	// In the stateless model, we don't track active streams
+	return AcexyStatus{}, nil
 }
 
-// ActiveStreamInfo represents information about an active stream
-// that can be exposed via the API
-type ActiveStreamInfo struct {
-	ID                string    `json:"id"`
-	PlaybackURL       string    `json:"playback_url"`
-	StatURL           string    `json:"stat_url"`
-	CommandURL        string    `json:"command_url"`
-	Clients           uint      `json:"clients"`
-	CreatedAt         time.Time `json:"created_at"`
-	HasPlayer         bool      `json:"has_player"`
-	EngineHost        string    `json:"engine_host,omitempty"`
-	EnginePort        int       `json:"engine_port,omitempty"`
-	EngineContainerID string    `json:"engine_container_id,omitempty"`
-}
-
-// GetActiveStreams returns information about all currently active streams.
-// This is useful for the orchestrator to query which streams are really
-// being used, allowing detection and cleanup of hanging streams.
-func (a *Acexy) GetActiveStreams() []ActiveStreamInfo {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	activeStreams := make([]ActiveStreamInfo, 0, len(a.streams))
-	for aceId, stream := range a.streams {
-		activeStreams = append(activeStreams, ActiveStreamInfo{
-			ID:                aceId.String(),
-			PlaybackURL:       stream.stream.PlaybackURL,
-			StatURL:           stream.stream.StatURL,
-			CommandURL:        stream.stream.CommandURL,
-			Clients:           stream.clients,
-			CreatedAt:         stream.createdAt,
-			HasPlayer:         stream.player != nil,
-			EngineHost:        stream.engineHost,
-			EnginePort:        stream.enginePort,
-			EngineContainerID: stream.engineContainerID,
-		})
-	}
-
-	return activeStreams
-}
-
-// SetStreamEngineInfo sets the engine information for a stream.
-// This is called by the proxy when using orchestrator to track which engine is serving the stream.
-func (a *Acexy) SetStreamEngineInfo(aceId AceID, host string, port int, containerID string) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
-
-	if stream, ok := a.streams[aceId]; ok {
-		stream.engineHost = host
-		stream.enginePort = port
-		stream.engineContainerID = containerID
-		slog.Debug("Set engine info for stream", "stream", aceId, "host", host, "port", port, "container_id", containerID)
-	} else {
-		slog.Warn("Cannot set engine info for non-existent stream", "stream", aceId)
-	}
-}
-
-// Creates a timeout channel that will be closed after the given timeout
+// SetTimeout creates a timeout channel that will be closed after the given timeout
 func SetTimeout(timeout time.Duration) chan struct{} {
-	// Create a channel that will be closed after the given timeout
 	timeoutChan := make(chan struct{})
-
 	go func() {
 		time.Sleep(timeout)
 		close(timeoutChan)
 	}()
-
 	return timeoutChan
 }
