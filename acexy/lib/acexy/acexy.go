@@ -124,10 +124,19 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	}
 	defer resp.Body.Close()
 
-	// For now, use simple io.Copy for reliability
-	// The Copier has timeout logic that's useful for long-running streams
-	// but can complicate short transfers in tests
-	_, err = io.Copy(out, resp.Body)
+	// Use buffered copier to reduce frame drops
+	// The larger buffer (default 4.2MiB) helps smooth out streaming by:
+	// 1. Reducing frequency of write operations
+	// 2. Better handling of network jitter
+	// 3. Buffering bursts of data for consistent delivery
+	copier := &Copier{
+		Destination:  out,
+		Source:       resp.Body,
+		EmptyTimeout: a.EmptyTimeout,
+		BufferSize:   a.BufferSize,
+	}
+	
+	err = copier.Copy()
 	if err != nil && !errors.Is(err, io.EOF) {
 		slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
 		return err
