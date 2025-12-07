@@ -12,6 +12,11 @@ A high-performance AceStream proxy with orchestrator-based engine management for
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
 - [Advanced Topics](#advanced-topics)
+  - [Network Optimization](#network-optimization)
+  - [Host Network Mode](#host-network-mode)
+  - [Stream Buffer Tuning](#stream-buffer-tuning)
+  - [Debug Mode](#debug-mode)
+- [Performance Tuning](doc/PERFORMANCE_TUNING.md)
 
 ## Orchestrator Integration
 
@@ -153,7 +158,7 @@ The multi-arch manifest ensures optimal performance by using native builds whene
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
 | `ACEXY_LISTEN_ADDR` | Address where acexy listens | `:8080` |
-| `ACEXY_BUFFER_SIZE` | Stream buffer size before copying to player | `4.2MiB` |
+| `ACEXY_BUFFER` | Stream buffer size for smooth playback. Larger buffer reduces frame drops by handling network jitter and bursty data delivery. | `4.2MiB` |
 | `ACEXY_NO_RESPONSE_TIMEOUT` | Timeout waiting for AceStream middleware response | `1s` |
 | `ACEXY_EMPTY_TIMEOUT` | Timeout to close stream after receiving empty data | `1m` |
 
@@ -192,6 +197,35 @@ Benefits:
 - Slight performance improvement
 
 Note: Host networking is only supported on Linux. See [Docker documentation](https://docs.docker.com/engine/network/drivers/host/) for details.
+
+### Stream Buffer Tuning
+
+Acexy uses a configurable buffer size to smooth out stream delivery and prevent frame drops. The buffer helps handle:
+
+- **Network jitter**: Temporary variations in network latency
+- **Bursty data delivery**: When AceStream sends data in irregular chunks
+- **Client read speed variations**: Different media players consume data at varying rates
+
+**Default Configuration (Recommended)**
+
+The default buffer size of 4.2MiB is optimized for most use cases:
+
+```yaml
+services:
+  acexy:
+    environment:
+      - ACEXY_BUFFER=4.2MiB
+```
+
+**When to Adjust Buffer Size**
+
+- **Lower buffer (1-2MiB)**: For memory-constrained environments or low-bitrate streams
+- **Higher buffer (8-16MiB)**: For high-bitrate 4K streams or unreliable networks
+- **Very high buffer (32MiB+)**: Only for extreme cases with very poor network conditions
+
+**Note**: Larger buffers consume more memory per stream. With default settings, each concurrent stream uses approximately 4.2MiB of buffer memory.
+
+For detailed performance tuning guidance, see [doc/PERFORMANCE_TUNING.md](doc/PERFORMANCE_TUNING.md).
 
 ### Debug Mode
 
