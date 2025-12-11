@@ -183,21 +183,6 @@ AceStream engine uses ports `8621/tcp` and `8621/udp` by default for P2P connect
 docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy-orchestrator
 ```
 
-### Host Network Mode
-
-On Linux, using host networking mode allows AceStream to use UPnP IGD for NAT traversal without Docker's bridge networking limitations:
-
-```shell
-docker run --network host ghcr.io/krinkuto11/acexy-orchestrator
-```
-
-Benefits:
-- No port exposure required
-- Direct network access for UPnP
-- Slight performance improvement
-
-Note: Host networking is only supported on Linux. See [Docker documentation](https://docs.docker.com/engine/network/drivers/host/) for details.
-
 ### Stream Buffer Tuning
 
 Acexy uses a configurable buffer size to smooth out stream delivery and prevent frame drops. The buffer helps handle:
