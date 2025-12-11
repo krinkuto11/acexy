@@ -175,14 +175,6 @@ For complete list of options, run: `acexy -help`
 
 ## Advanced Topics
 
-### Network Optimization
-
-AceStream engine uses ports `8621/tcp` and `8621/udp` by default for P2P connections. Exposing these ports can improve streaming stability:
-
-```shell
-docker run -p 8080:8080 -p 8621:8621 ghcr.io/krinkuto11/acexy-orchestrator
-```
-
 ### Stream Buffer Tuning
 
 Acexy uses a configurable buffer size to smooth out stream delivery and prevent frame drops. The buffer helps handle:
