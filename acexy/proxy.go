@@ -201,10 +201,11 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Emit stream started event to orchestrator for internal tracking
+	var streamID string
 	if p.Orch != nil {
 		idType, key := aceId.ID()
 		playbackID := playbackIDFromStat(stream.StatURL)
-		streamID := key + "|" + playbackID
+		streamID = key + "|" + playbackID
 		orchKeyType := mapAceIDTypeToOrchestrator(idType)
 		
 		slog.Debug("Emitting stream_started event to orchestrator",
@@ -228,21 +229,49 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Start streaming - this blocks until complete or client disconnects
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
-	if err := p.Acexy.StartStream(stream, w); err != nil {
-		slog.Error("Failed to stream", "stream", aceId, "error", err)
+	streamErr := p.Acexy.StartStream(stream, w)
+	
+	// Determine reason for stream ending
+	var reason string
+	if streamErr != nil {
+		slog.Error("Failed to stream", "stream", aceId, "error", streamErr)
+		
+		// Classify the error to determine appropriate reason
+		errStr := streamErr.Error()
+		if strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "connection reset") {
+			reason = "client_disconnected"
+		} else if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") {
+			reason = "timeout"
+		} else {
+			reason = "error"
+		}
+		
 		// Record engine failure for error recovery tracking
 		if p.Orch != nil && selectedEngineContainerID != "" {
 			p.Orch.RecordEngineFailure(selectedEngineContainerID)
 		}
-		return
+	} else {
+		// Stream completed successfully
+		slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId)
+		reason = "completed"
+		
+		// Reset engine error state on successful stream completion
+		if p.Orch != nil && selectedEngineContainerID != "" {
+			p.Orch.ResetEngineErrors(selectedEngineContainerID)
+		}
 	}
-
-	// Stream completed successfully
-	slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId)
 	
-	// Reset engine error state on successful stream completion
-	if p.Orch != nil && selectedEngineContainerID != "" {
-		p.Orch.ResetEngineErrors(selectedEngineContainerID)
+	// Emit stream_ended event to orchestrator and send stop command to engine
+	if p.Orch != nil && streamID != "" {
+		slog.Debug("Stream ending, emitting stream_ended event",
+			"stream_id", streamID, "reason", reason)
+		p.Orch.EmitEnded(streamID, reason)
+		
+		// Send stop command to AceStream engine to clean up resources
+		if err := acexy.CloseStream(stream); err != nil {
+			slog.Debug("Failed to send stop command to engine", 
+				"stream_id", streamID, "error", err)
+		}
 	}
 }
 
