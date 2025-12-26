@@ -289,6 +289,72 @@ Records error details with context.
 }
 ```
 
+#### 9. Disconnect Logs (`*_disconnects.jsonl`)
+
+Records client disconnect events with detailed reason classification. This is particularly useful for investigating why streams end prematurely.
+
+**Fields:**
+- `stream_id`: Stream identifier (content_id|playback_session_id)
+- `ace_id`: AceStream content ID
+- `reason`: Classified disconnect reason code
+- `error`: Raw error message (if any)
+- `bytes_copied`: Number of bytes successfully transmitted
+- `duration_ms`: Stream duration in milliseconds
+- `detailed_reason`: Human-readable explanation of disconnect cause
+- `engine_host`: Engine host used for the stream
+- `engine_port`: Engine port used for the stream
+- `container_id`: Engine container ID
+
+**Disconnect Reason Codes:**
+- `completed`: Stream finished normally
+- `client_disconnected`: Client closed the connection (broken pipe, connection reset, etc.)
+- `timeout`: Operation timed out (I/O timeout, deadline exceeded)
+- `network_error`: Network connectivity issue (unreachable, no route, etc.)
+- `eof`: Unexpected end of file from source stream
+- `closed_pipe`: Attempt to write to closed pipe
+- `closed_connection`: Attempt to use closed network connection
+- `buffer_error`: System buffer space issues
+- `memory_error`: System memory issues
+- `error`: Unclassified error (includes raw error message in detailed_reason)
+
+**Example (Client Disconnect):**
+```json
+{
+  "session_id": "20240318_143052",
+  "timestamp": "2024-03-18T14:35:42.123456789Z",
+  "elapsed_seconds": 350.0,
+  "stream_id": "dd1e67078381739d14beca697356ab76d49d1a2|playback-xyz",
+  "ace_id": "dd1e67078381739d14beca697356ab76d49d1a2",
+  "reason": "client_disconnected",
+  "error": "write tcp 127.0.0.1:8080->192.168.1.100:54321: broken pipe",
+  "bytes_copied": 52428800,
+  "duration_ms": 125000,
+  "detailed_reason": "client closed connection (broken pipe)",
+  "engine_host": "localhost",
+  "engine_port": 19000,
+  "container_id": "acestream-abc123"
+}
+```
+
+**Example (Normal Completion):**
+```json
+{
+  "session_id": "20240318_143052",
+  "timestamp": "2024-03-18T14:45:30.987654321Z",
+  "elapsed_seconds": 938.864,
+  "stream_id": "dd1e67078381739d14beca697356ab76d49d1a2|playback-xyz",
+  "ace_id": "dd1e67078381739d14beca697356ab76d49d1a2",
+  "reason": "completed",
+  "error": "",
+  "bytes_copied": 524288000,
+  "duration_ms": 300000,
+  "detailed_reason": "stream finished normally",
+  "engine_host": "localhost",
+  "engine_port": 19000,
+  "container_id": "acestream-abc123"
+}
+```
+
 ## Analyzing Debug Logs
 
 ### Using Command-Line Tools
@@ -316,6 +382,21 @@ cat debug_logs/*_orchestrator_health.jsonl | jq 'select(.status != "healthy")'
 #### View all stress events
 ```bash
 cat debug_logs/*_stress.jsonl | jq
+```
+
+#### Analyze disconnect patterns
+```bash
+# Count disconnects by reason
+cat debug_logs/*_disconnects.jsonl | jq -r '.reason' | sort | uniq -c
+
+# Find streams that transferred less than 1MB before disconnecting
+cat debug_logs/*_disconnects.jsonl | jq 'select(.bytes_copied < 1048576)'
+
+# Show disconnects with detailed reasons
+cat debug_logs/*_disconnects.jsonl | jq '{ace_id, reason, detailed_reason, bytes_copied, duration_ms}'
+
+# Find the most common disconnect causes
+cat debug_logs/*_disconnects.jsonl | jq -r '.detailed_reason' | sort | uniq -c | sort -rn
 ```
 
 ### Python Analysis Example
@@ -497,6 +578,27 @@ Debug logging uses defer blocks, so events may be delayed if operations hang. Ch
 
 ## Example Debugging Workflow
 
+### Problem: Investigating Client Disconnects
+
+1. **Enable debug mode** to capture disconnect events
+2. **Reproduce the disconnect** scenario
+3. **Analyze disconnect logs** to identify patterns:
+   ```bash
+   # Count disconnects by reason
+   cat debug_logs/*_disconnects.jsonl | jq -r '.reason' | sort | uniq -c
+   ```
+4. **Check for premature disconnects** (low bytes transferred):
+   ```bash
+   cat debug_logs/*_disconnects.jsonl | jq 'select(.bytes_copied < 10485760) | {ace_id, reason, detailed_reason, bytes_copied, duration_ms}'
+   ```
+5. **Identify systematic issues**:
+   - Many `timeout` reasons → Check network latency or buffer settings
+   - Many `client_disconnected` with low bytes → Client compatibility or buffer issues
+   - Many `eof` errors → Engine stream quality or source issues
+6. **Correlate with engine logs** to find root cause
+7. **Implement fixes** based on findings
+8. **Verify resolution** by monitoring disconnect rates
+
 ### Problem: Slow stream startup times
 
 1. **Enable debug mode** on both acexy and orchestrator
@@ -585,5 +687,22 @@ Debug mode provides comprehensive visibility into acexy operations, enabling:
 - **End-to-end tracing** across acexy and orchestrator
 - **Automatic detection** of stress situations
 - **Historical analysis** of system behavior
+- **Detailed disconnect analysis** with classified reasons for client connection issues
+
+### Key Features for Disconnect Debugging
+
+The disconnect logging feature provides:
+
+1. **Automatic classification** of disconnect reasons into actionable categories
+2. **Metrics tracking** including bytes transferred and stream duration
+3. **Contextual information** about the engine and stream being used
+4. **Pattern detection** to identify systematic issues vs. one-off problems
+
+Common disconnect patterns you can identify:
+
+- **Client-side issues**: User closing player, network interruptions
+- **Timeout issues**: Slow networks, undersized buffers, engine delays
+- **Engine issues**: Stream quality problems, unexpected EOF
+- **System resource issues**: Buffer space or memory problems
 
 For questions or issues, please refer to the main documentation or open an issue on GitHub.
