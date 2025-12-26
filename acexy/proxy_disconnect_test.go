@@ -137,7 +137,7 @@ func TestClassifyDisconnectReason_EOF(t *testing.T) {
 			name:           "unexpected EOF",
 			err:            errors.New("unexpected EOF"),
 			expectedReason: "eof",
-			expectedDetail: "end of file encountered unexpectedly",
+			expectedDetail: "unexpected EOF during read",
 		},
 	}
 

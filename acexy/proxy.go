@@ -618,6 +618,11 @@ func classifyDisconnectReason(err error) (reason string, detailedReason string) 
 		return "network_error", "host is down"
 	}
 	
+	// Check for unexpected EOF - must check before generic "eof" to be specific
+	if strings.Contains(errStrLower, "unexpected eof") {
+		return "eof", "unexpected EOF during read"
+	}
+	
 	// Check for EOF-related errors
 	if errors.Is(err, io.EOF) {
 		return "eof", "unexpected EOF from source stream"
@@ -625,16 +630,10 @@ func classifyDisconnectReason(err error) (reason string, detailedReason string) 
 	if strings.Contains(errStrLower, "eof") {
 		return "eof", "end of file encountered unexpectedly"
 	}
-	if strings.Contains(errStrLower, "unexpected eof") {
-		return "eof", "unexpected EOF during read"
-	}
 	
 	// Check for closed pipe/connection errors
 	if errors.Is(err, io.ErrClosedPipe) {
 		return "closed_pipe", "write to closed pipe"
-	}
-	if strings.Contains(errStrLower, "closed pipe") {
-		return "closed_pipe", "pipe or connection was closed"
 	}
 	if strings.Contains(errStrLower, "use of closed network connection") {
 		return "closed_connection", "attempted to use closed network connection"
