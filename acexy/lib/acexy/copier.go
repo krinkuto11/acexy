@@ -23,6 +23,7 @@ type Copier struct {
 	/**! Private Data */
 	timer          *time.Timer
 	bufferedWriter *bufio.Writer
+	bytesCopied    int64
 }
 
 // Starts copying the data from the source to the destination.
@@ -80,5 +81,12 @@ func (c *Copier) Write(p []byte) (n int, err error) {
 	// Reset the timer, since we have data to write
 	c.timer.Reset(c.EmptyTimeout)
 	// Write the data to the destination
-	return c.bufferedWriter.Write(p)
+	n, err = c.bufferedWriter.Write(p)
+	c.bytesCopied += int64(n)
+	return n, err
+}
+
+// BytesCopied returns the total number of bytes copied
+func (c *Copier) BytesCopied() int64 {
+	return c.bytesCopied
 }

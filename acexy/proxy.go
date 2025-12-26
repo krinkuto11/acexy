@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"javinator9889/acexy/lib/acexy"
 	"javinator9889/acexy/lib/debug"
 	"log/slog"
@@ -229,22 +230,32 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	// Start streaming - this blocks until complete or client disconnects
 	slog.Debug("Starting stream", "path", r.URL.Path, "id", aceId)
-	streamErr := p.Acexy.StartStream(stream, w)
+	streamStartTime := time.Now()
+	copier, streamErr := p.Acexy.StartStream(stream, w)
+	streamDuration := time.Since(streamStartTime)
 	
-	// Determine reason for stream ending
+	// Determine reason for stream ending and classify the error
 	var reason string
+	var bytesCopied int64
+	var detailedReason string
+	
+	if copier != nil {
+		bytesCopied = copier.BytesCopied()
+	}
+	
 	if streamErr != nil {
-		slog.Error("Failed to stream", "stream", aceId, "error", streamErr)
+		slog.Error("Failed to stream", "stream", aceId, "error", streamErr, "bytes_copied", bytesCopied, "duration", streamDuration)
 		
-		// Classify the error to determine appropriate reason
-		errStr := streamErr.Error()
-		if strings.Contains(errStr, "broken pipe") || strings.Contains(errStr, "connection reset") {
-			reason = "client_disconnected"
-		} else if strings.Contains(errStr, "timeout") || strings.Contains(errStr, "deadline exceeded") {
-			reason = "timeout"
-		} else {
-			reason = "error"
-		}
+		// Classify the error to determine appropriate reason with more detail
+		reason, detailedReason = classifyDisconnectReason(streamErr)
+		
+		// Log detailed disconnect information in debug mode
+		debugLog.LogDisconnect(streamID, aceIDStr, reason, streamErr.Error(), bytesCopied, streamDuration, map[string]interface{}{
+			"detailed_reason": detailedReason,
+			"engine_host":     selectedHost,
+			"engine_port":     selectedPort,
+			"container_id":    selectedEngineContainerID,
+		})
 		
 		// Record engine failure for error recovery tracking
 		if p.Orch != nil && selectedEngineContainerID != "" {
@@ -252,8 +263,17 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// Stream completed successfully
-		slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId)
+		slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId, "bytes_copied", bytesCopied, "duration", streamDuration)
 		reason = "completed"
+		detailedReason = "stream finished normally"
+		
+		// Log successful completion in debug mode
+		debugLog.LogDisconnect(streamID, aceIDStr, reason, "", bytesCopied, streamDuration, map[string]interface{}{
+			"detailed_reason": detailedReason,
+			"engine_host":     selectedHost,
+			"engine_port":     selectedPort,
+			"container_id":    selectedEngineContainerID,
+		})
 		
 		// Reset engine error state on successful stream completion
 		if p.Orch != nil && selectedEngineContainerID != "" {
@@ -550,4 +570,84 @@ func playbackIDFromStat(statURL string) string {
 	
 	slog.Warn("Could not extract playback ID from stat URL", "url", statURL)
 	return ""
+}
+
+// classifyDisconnectReason analyzes an error and returns a reason code and detailed description
+// This provides more thorough debugging information about why client disconnects occur
+func classifyDisconnectReason(err error) (reason string, detailedReason string) {
+	if err == nil {
+		return "completed", "stream finished normally"
+	}
+	
+	errStr := err.Error()
+	errStrLower := strings.ToLower(errStr)
+	
+	// Check for client-side disconnects
+	if strings.Contains(errStrLower, "broken pipe") {
+		return "client_disconnected", "client closed connection (broken pipe)"
+	}
+	if strings.Contains(errStrLower, "connection reset by peer") {
+		return "client_disconnected", "client reset connection (RST packet received)"
+	}
+	if strings.Contains(errStrLower, "connection reset") {
+		return "client_disconnected", "connection reset by network or client"
+	}
+	if strings.Contains(errStrLower, "write: connection refused") {
+		return "client_disconnected", "client refused connection on write"
+	}
+	
+	// Check for timeout-related errors
+	if strings.Contains(errStrLower, "i/o timeout") {
+		return "timeout", "I/O operation timed out"
+	}
+	if strings.Contains(errStrLower, "deadline exceeded") {
+		return "timeout", "deadline exceeded (context timeout or read/write timeout)"
+	}
+	if strings.Contains(errStrLower, "timeout") {
+		return "timeout", "operation timed out"
+	}
+	
+	// Check for network errors
+	if strings.Contains(errStrLower, "network is unreachable") {
+		return "network_error", "network is unreachable"
+	}
+	if strings.Contains(errStrLower, "no route to host") {
+		return "network_error", "no route to host"
+	}
+	if strings.Contains(errStrLower, "host is down") {
+		return "network_error", "host is down"
+	}
+	
+	// Check for EOF-related errors
+	if errors.Is(err, io.EOF) {
+		return "eof", "unexpected EOF from source stream"
+	}
+	if strings.Contains(errStrLower, "eof") {
+		return "eof", "end of file encountered unexpectedly"
+	}
+	if strings.Contains(errStrLower, "unexpected eof") {
+		return "eof", "unexpected EOF during read"
+	}
+	
+	// Check for closed pipe/connection errors
+	if errors.Is(err, io.ErrClosedPipe) {
+		return "closed_pipe", "write to closed pipe"
+	}
+	if strings.Contains(errStrLower, "closed pipe") {
+		return "closed_pipe", "pipe or connection was closed"
+	}
+	if strings.Contains(errStrLower, "use of closed network connection") {
+		return "closed_connection", "attempted to use closed network connection"
+	}
+	
+	// Check for buffer or memory errors
+	if strings.Contains(errStrLower, "no buffer space available") {
+		return "buffer_error", "system out of buffer space"
+	}
+	if strings.Contains(errStrLower, "cannot allocate memory") {
+		return "memory_error", "system out of memory"
+	}
+	
+	// Generic error fallback
+	return "error", fmt.Sprintf("unclassified error: %s", errStr)
 }
