@@ -171,6 +171,22 @@ func (d *DebugLogger) LogError(component, operation string, err error, context m
 	d.writeLog("errors", data)
 }
 
+// LogDisconnect logs client disconnect events with detailed reason
+func (d *DebugLogger) LogDisconnect(streamID, aceID, reason, errorMsg string, bytesCopied int64, duration time.Duration, context map[string]interface{}) {
+	data := map[string]interface{}{
+		"stream_id":    streamID,
+		"ace_id":       aceID,
+		"reason":       reason,
+		"error":        errorMsg,
+		"bytes_copied": bytesCopied,
+		"duration_ms":  duration.Milliseconds(),
+	}
+	for k, v := range context {
+		data[k] = v
+	}
+	d.writeLog("disconnects", data)
+}
+
 var globalLogger *DebugLogger
 
 // InitDebugLogger initializes the global debug logger
