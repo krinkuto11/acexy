@@ -582,6 +582,11 @@ func classifyDisconnectReason(err error) (reason string, detailedReason string) 
 	errStr := err.Error()
 	errStrLower := strings.ToLower(errStr)
 	
+	// Check for empty timeout error first (specific check before string matching)
+	if strings.Contains(errStrLower, "stream empty timeout") {
+		return "empty_timeout", "stream closed due to inactivity (no data received within timeout period)"
+	}
+	
 	// Check for client-side disconnects
 	if strings.Contains(errStrLower, "broken pipe") {
 		return "client_disconnected", "client closed connection (broken pipe)"

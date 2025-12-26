@@ -54,6 +54,12 @@ func TestClassifyDisconnectReason_Timeouts(t *testing.T) {
 		expectedDetail string
 	}{
 		{
+			name:           "empty timeout",
+			err:            errors.New("stream empty timeout: no data received within timeout period"),
+			expectedReason: "empty_timeout",
+			expectedDetail: "stream closed due to inactivity (no data received within timeout period)",
+		},
+		{
 			name:           "i/o timeout",
 			err:            errors.New("read tcp: i/o timeout"),
 			expectedReason: "timeout",

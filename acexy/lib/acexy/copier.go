@@ -2,10 +2,14 @@ package acexy
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"log/slog"
 	"time"
 )
+
+// ErrEmptyTimeout is returned when the copier times out waiting for data
+var ErrEmptyTimeout = errors.New("stream empty timeout: no data received within timeout period")
 
 // Copier is an implementation that copies the data from the source to the destination.
 // It has an empty timeout that is used to determine when the source is empty - this is,
@@ -24,6 +28,7 @@ type Copier struct {
 	timer          *time.Timer
 	bufferedWriter *bufio.Writer
 	bytesCopied    int64
+	timedOut       bool
 }
 
 // Starts copying the data from the source to the destination.
@@ -41,14 +46,16 @@ func (c *Copier) Copy() error {
 				slog.Debug("Done copying", "source", c.Source, "destination", c.Destination)
 				return
 			case <-c.timer.C:
-				// On timeout, flush the buffer, and close both the source and the destination
+				// On timeout, mark as timed out, flush the buffer, and close both the source and the destination
+				c.timedOut = true
+				slog.Info("Stream empty timeout triggered", "empty_timeout", c.EmptyTimeout, "bytes_copied", c.bytesCopied)
 				c.bufferedWriter.Flush()
 				if closer, ok := c.Source.(io.Closer); ok {
-					slog.Debug("Closing source", "source", c.Source)
+					slog.Debug("Closing source due to empty timeout", "source", c.Source)
 					closer.Close()
 				}
 				if closer, ok := c.Destination.(io.Closer); ok {
-					slog.Debug("Closing destination", "destination", c.Destination)
+					slog.Debug("Closing destination due to empty timeout", "destination", c.Destination)
 					closer.Close()
 				}
 				return
@@ -65,6 +72,12 @@ func (c *Copier) Copy() error {
 		if err == nil {
 			err = ferr
 		}
+	}
+	
+	// If the timeout occurred, return ErrEmptyTimeout instead of the underlying error
+	if c.timedOut {
+		slog.Debug("Returning empty timeout error", "underlying_error", err)
+		return ErrEmptyTimeout
 	}
 	
 	return err
