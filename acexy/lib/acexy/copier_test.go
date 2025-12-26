@@ -74,7 +74,8 @@ func TestCopier_NormalCompletion(t *testing.T) {
 	
 	err := copier.Copy()
 	
-	// Should complete without error (EOF is suppressed in acexy.go)
+	// The copier returns EOF when the source is naturally exhausted.
+	// This is expected for normal completion, but not an error.
 	if err != nil && !errors.Is(err, io.EOF) {
 		t.Errorf("Expected nil or EOF, got: %v", err)
 	}

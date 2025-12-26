@@ -48,7 +48,8 @@ func (c *Copier) Copy() error {
 				return
 			case <-c.timer.C:
 				// On timeout, mark as timed out and close the source to interrupt io.Copy
-				// We don't flush here to avoid race conditions - flushing happens in the main goroutine
+				// We don't flush here to avoid race conditions with the main goroutine,
+				// which may still be writing data. Flushing only happens in the main goroutine.
 				c.timedOut.Store(true)
 				slog.Info("Stream empty timeout triggered", "empty_timeout", c.EmptyTimeout, "bytes_copied", atomic.LoadInt64(&c.bytesCopied))
 				// Close source to interrupt the io.Copy operation
