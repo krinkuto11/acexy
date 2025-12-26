@@ -138,9 +138,17 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) (*Copier, error) {
 	}
 	
 	err = copier.Copy()
-	if err != nil && !errors.Is(err, io.EOF) {
-		slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
-		return copier, err
+	if err != nil {
+		// Don't suppress empty timeout errors - they should be reported
+		if errors.Is(err, ErrEmptyTimeout) {
+			slog.Debug("Stream copy ended due to empty timeout", "stream", stream.ID, "error", err)
+			return copier, err
+		}
+		// Suppress io.EOF as it's a normal stream completion
+		if !errors.Is(err, io.EOF) {
+			slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
+			return copier, err
+		}
 	}
 
 	slog.Debug("Stream finished successfully", "stream", stream.ID)
