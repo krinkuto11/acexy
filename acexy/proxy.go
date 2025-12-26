@@ -191,11 +191,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		statusCode = http.StatusInternalServerError
 		slog.Error("Failed to fetch stream", "stream", aceId, "error", err)
-		
-		// Record engine failure for error recovery tracking
-		if p.Orch != nil && selectedEngineContainerID != "" {
-			p.Orch.RecordEngineFailure(selectedEngineContainerID)
-		}
 
 		http.Error(w, "Failed to start stream: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -256,11 +251,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			"engine_port":     selectedPort,
 			"container_id":    selectedEngineContainerID,
 		})
-		
-		// Record engine failure for error recovery tracking
-		if p.Orch != nil && selectedEngineContainerID != "" {
-			p.Orch.RecordEngineFailure(selectedEngineContainerID)
-		}
 	} else {
 		// Stream completed successfully
 		slog.Debug("Stream completed", "path", r.URL.Path, "id", aceId, "bytes_copied", bytesCopied, "duration", streamDuration)
@@ -274,11 +264,6 @@ func (p *Proxy) HandleStream(w http.ResponseWriter, r *http.Request) {
 			"engine_port":     selectedPort,
 			"container_id":    selectedEngineContainerID,
 		})
-		
-		// Reset engine error state on successful stream completion
-		if p.Orch != nil && selectedEngineContainerID != "" {
-			p.Orch.ResetEngineErrors(selectedEngineContainerID)
-		}
 	}
 	
 	// Emit stream_ended event to orchestrator and send stop command to engine
