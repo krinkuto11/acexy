@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,7 +29,7 @@ type Copier struct {
 	timer          *time.Timer
 	bufferedWriter *bufio.Writer
 	bytesCopied    int64
-	timedOut       bool
+	timedOut       atomic.Bool
 }
 
 // Starts copying the data from the source to the destination.
@@ -46,14 +47,16 @@ func (c *Copier) Copy() error {
 				slog.Debug("Done copying", "source", c.Source, "destination", c.Destination)
 				return
 			case <-c.timer.C:
-				// On timeout, mark as timed out, flush the buffer, and close both the source and the destination
-				c.timedOut = true
-				slog.Info("Stream empty timeout triggered", "empty_timeout", c.EmptyTimeout, "bytes_copied", c.bytesCopied)
-				c.bufferedWriter.Flush()
+				// On timeout, mark as timed out and close the source to interrupt io.Copy
+				// We don't flush here to avoid race conditions - flushing happens in the main goroutine
+				c.timedOut.Store(true)
+				slog.Info("Stream empty timeout triggered", "empty_timeout", c.EmptyTimeout, "bytes_copied", atomic.LoadInt64(&c.bytesCopied))
+				// Close source to interrupt the io.Copy operation
 				if closer, ok := c.Source.(io.Closer); ok {
 					slog.Debug("Closing source due to empty timeout", "source", c.Source)
 					closer.Close()
 				}
+				// Close destination to signal end of stream
 				if closer, ok := c.Destination.(io.Closer); ok {
 					slog.Debug("Closing destination due to empty timeout", "destination", c.Destination)
 					closer.Close()
@@ -75,7 +78,7 @@ func (c *Copier) Copy() error {
 	}
 	
 	// If the timeout occurred, return ErrEmptyTimeout instead of the underlying error
-	if c.timedOut {
+	if c.timedOut.Load() {
 		slog.Debug("Returning empty timeout error", "underlying_error", err)
 		return ErrEmptyTimeout
 	}
@@ -95,11 +98,11 @@ func (c *Copier) Write(p []byte) (n int, err error) {
 	c.timer.Reset(c.EmptyTimeout)
 	// Write the data to the destination
 	n, err = c.bufferedWriter.Write(p)
-	c.bytesCopied += int64(n)
+	atomic.AddInt64(&c.bytesCopied, int64(n))
 	return n, err
 }
 
 // BytesCopied returns the total number of bytes copied
 func (c *Copier) BytesCopied() int64 {
-	return c.bytesCopied
+	return atomic.LoadInt64(&c.bytesCopied)
 }
