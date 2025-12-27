@@ -115,12 +115,13 @@ func (a *Acexy) FetchStream(aceId AceID, extraParams url.Values) (*AceStream, er
 
 // StartStream initiates the stream and proxies it to the output writer.
 // This is stateless - just gets the stream from AceStream and copies it.
-func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
+// Returns the copier instance (for metrics) and any error that occurred.
+func (a *Acexy) StartStream(stream *AceStream, out io.Writer) (*Copier, error) {
 	// Get the stream from AceStream
 	resp, err := a.middleware.Get(stream.PlaybackURL)
 	if err != nil {
 		slog.Error("Failed to get stream", "error", err)
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -137,13 +138,21 @@ func (a *Acexy) StartStream(stream *AceStream, out io.Writer) error {
 	}
 	
 	err = copier.Copy()
-	if err != nil && !errors.Is(err, io.EOF) {
-		slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
-		return err
+	if err != nil {
+		// Don't suppress empty timeout errors - they should be reported
+		if errors.Is(err, ErrEmptyTimeout) {
+			slog.Debug("Stream copy ended due to empty timeout", "stream", stream.ID, "error", err)
+			return copier, err
+		}
+		// Suppress io.EOF as it's a normal stream completion
+		if !errors.Is(err, io.EOF) {
+			slog.Debug("Stream copy completed with error", "stream", stream.ID, "error", err)
+			return copier, err
+		}
 	}
 
 	slog.Debug("Stream finished successfully", "stream", stream.ID)
-	return nil
+	return copier, nil
 }
 
 // GetStream performs a request to the AceStream backend to start a new stream.

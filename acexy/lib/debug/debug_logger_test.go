@@ -387,6 +387,63 @@ func TestGetDebugLogger_Uninitialized(t *testing.T) {
 	}
 }
 
+func TestDebugLogger_Disconnect(t *testing.T) {
+	tempDir := t.TempDir()
+	logger := NewDebugLogger(true, tempDir)
+
+	// Log a disconnect event
+	context := map[string]interface{}{
+		"detailed_reason": "client closed connection (broken pipe)",
+		"engine_host":     "localhost",
+		"engine_port":     19000,
+		"container_id":    "container-xyz",
+	}
+	logger.LogDisconnect("stream-123|session-456", "test_ace_id_789", "client_disconnected", "write tcp: broken pipe", 1048576, 5*time.Second, context)
+
+	// Verify log file exists
+	files, _ := filepath.Glob(filepath.Join(tempDir, "*_disconnects.jsonl"))
+	if len(files) != 1 {
+		t.Fatalf("Expected 1 disconnects log file, got %d", len(files))
+	}
+
+	// Verify log content
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+
+	lines := parseJSONLines(t, data)
+	if len(lines) < 1 {
+		t.Fatalf("Expected at least 1 log entry, got %d", len(lines))
+	}
+
+	entry := lines[0]
+	if entry["stream_id"] != "stream-123|session-456" {
+		t.Errorf("Expected stream_id 'stream-123|session-456', got %v", entry["stream_id"])
+	}
+	if entry["ace_id"] != "test_ace_id_789" {
+		t.Errorf("Expected ace_id test_ace_id_789, got %v", entry["ace_id"])
+	}
+	if entry["reason"] != "client_disconnected" {
+		t.Errorf("Expected reason client_disconnected, got %v", entry["reason"])
+	}
+	if entry["error"] != "write tcp: broken pipe" {
+		t.Errorf("Expected error 'write tcp: broken pipe', got %v", entry["error"])
+	}
+	if entry["bytes_copied"] != float64(1048576) {
+		t.Errorf("Expected bytes_copied 1048576, got %v", entry["bytes_copied"])
+	}
+	if entry["detailed_reason"] != "client closed connection (broken pipe)" {
+		t.Errorf("Expected detailed_reason 'client closed connection (broken pipe)', got %v", entry["detailed_reason"])
+	}
+	if entry["engine_host"] != "localhost" {
+		t.Errorf("Expected engine_host localhost, got %v", entry["engine_host"])
+	}
+	if entry["engine_port"] != float64(19000) {
+		t.Errorf("Expected engine_port 19000, got %v", entry["engine_port"])
+	}
+}
+
 // Helper function to parse JSONL file
 func parseJSONLines(t *testing.T, data []byte) []map[string]interface{} {
 	t.Helper()

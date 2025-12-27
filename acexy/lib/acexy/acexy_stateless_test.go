@@ -140,7 +140,8 @@ func TestStartStreamStateless(t *testing.T) {
 	var output bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- acexyInst.StartStream(stream, &output)
+		_, err := acexyInst.StartStream(stream, &output)
+		done <- err
 	}()
 
 	// Wait for stream to complete (should be quick since we have all data)
@@ -222,7 +223,7 @@ func TestConcurrentRequests(t *testing.T) {
 			}
 
 			var output bytes.Buffer
-			err = acexyInst.StartStream(stream, &output)
+			_, err = acexyInst.StartStream(stream, &output)
 			if err != nil {
 				errors <- fmt.Errorf("request %d stream failed: %w", idx, err)
 				done <- false
